@@ -73,9 +73,30 @@ def test_intake_is_rate_limited_per_ip(monkeypatch):
     from apps.api import main
 
     monkeypatch.setattr(main, "INTAKE_LIMIT", 3)
-    main._hits.clear()
+    main._hits.clear(), main._global.clear()
     body = {"text": "milk"}
     codes = [c.post("/intake/manual", headers=H, json=body).status_code for _ in range(4)]
     assert codes == [200, 200, 200, 429]
     assert c.get("/deals", headers=H).status_code == 200  # reads are never limited
-    main._hits.clear()
+    main._hits.clear(), main._global.clear()
+
+
+def test_global_cap_backstops_many_ips(monkeypatch):
+    from apps.api import main
+
+    monkeypatch.setattr(main, "INTAKE_GLOBAL_LIMIT", 2)
+    main._hits.clear(), main._global.clear()
+    ips = ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+    codes = [TestClient(app, client=(ip, 1)).post("/intake/manual", headers=H, json={"text": "x"}).status_code
+             for ip in ips]
+    assert codes == [200, 200, 429]
+    assert len(main._hits) == 2  # rejected clients cost no memory
+    main._hits.clear(), main._global.clear()
+
+
+def test_ipv6_clients_share_a_slash_64():
+    from apps.api import main
+
+    a, b = main._client_key("2001:db8:1:2::1"), main._client_key("2001:db8:1:2:ffff::9")
+    assert a == b != main._client_key("2001:db8:1:3::1")
+    assert main._client_key("10.0.0.7") == "10.0.0.7"

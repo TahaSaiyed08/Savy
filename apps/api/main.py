@@ -1,4 +1,5 @@
 """Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
+import ipaddress
 import os
 import time
 from collections import deque
@@ -15,26 +16,47 @@ app = FastAPI(title="Real Deal API", version="0.1.0")
 MAX_UPLOAD = 10 * 1024 * 1024
 CONFIRM_BELOW = 0.6
 
-# Intake calls paid APIs (Anthropic, ElevenLabs) and the app has no login, so cap them per client IP.
+# Intake calls paid APIs (Anthropic, ElevenLabs) and the app has no login, so cap them per client and globally.
 # request.client.host is the real visitor IP behind `make tunnel`: uvicorn resolves X-Forwarded-For from the
 # local Next proxy and takes the right-most hop (Cloudflare's), so a forged header can't dodge the limit.
 INTAKE_LIMIT = int(os.getenv("INTAKE_LIMIT_PER_HOUR", "30"))
+INTAKE_GLOBAL_LIMIT = int(os.getenv("INTAKE_GLOBAL_LIMIT_PER_HOUR", "300"))  # backstop on total spend
 _WINDOW = 3600.0
 _hits: dict[str, deque[float]] = {}
+_global: deque[float] = deque()
 
 
-def rate_limit(request: Request) -> None:
-    now, ip = time.monotonic(), request.client.host if request.client else "unknown"
-    if len(_hits) > 10_000:  # bound memory: forget clients idle for a full window
-        for k in [k for k, q in _hits.items() if not q or now - q[-1] > _WINDOW]:
-            del _hits[k]
-    q = _hits.setdefault(ip, deque())
+def _client_key(host: str) -> str:
+    """IPv4 address, or the /64 for IPv6 (one host usually controls a whole /64)."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else host
+
+
+def _prune(q: deque[float], now: float) -> None:
     while q and now - q[0] > _WINDOW:
         q.popleft()
-    if len(q) >= INTAKE_LIMIT:
-        retry = str(int(_WINDOW - (now - q[0])) + 1)
+
+
+async def rate_limit(request: Request) -> None:
+    """async on purpose: it runs on the event-loop thread, so check-then-record can't race."""
+    now = time.monotonic()
+    key = _client_key(request.client.host if request.client else "unknown")
+    q = _hits.get(key, deque())
+    _prune(q, now)
+    _prune(_global, now)
+    full = q if len(q) >= INTAKE_LIMIT else _global if len(_global) >= INTAKE_GLOBAL_LIMIT else None
+    if full is not None:
+        retry = str(int(_WINDOW - (now - full[0])) + 1)
         raise HTTPException(429, "Too many uploads; try again later", {"Retry-After": retry})
     q.append(now)
+    _global.append(now)
+    _hits[key] = q  # only accepted calls create entries, so memory is bounded by the global cap
+    if len(_hits) > 2 * INTAKE_GLOBAL_LIMIT:
+        for k in [k for k, v in _hits.items() if not v or now - v[-1] > _WINDOW]:
+            del _hits[k]
 
 
 UserId = Annotated[UUID, Header(alias="X-User-Id", description="UUID generated on the device")]
