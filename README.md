@@ -20,8 +20,9 @@ make dev     # API on :8000, PWA on :3000; Ctrl-C stops both
 Open http://localhost:3000. With an empty `.env` everything runs on **mock data**: a new device gets five seeded
 list items, mock flyers for five stores, canned receipt and voice extraction. API docs: http://localhost:8000/docs.
 
-On your phone: same Wi-Fi, open `http://<laptop-ip>:3000`; or tunnel for HTTPS (needed for the camera, the mic and
-home-screen install): `cloudflared tunnel --url http://localhost:3000`.
+On your phone: run `make tunnel` in a second terminal (`brew install cloudflared` once) and open the
+`https://….trycloudflare.com` URL it prints. Campus Wi-Fi (eduroam) blocks phone-to-laptop traffic, and the camera,
+mic and home-screen install need HTTPS anyway. The URL changes each run.
 
 Other targets: `make test` (pytest), `make lint` (ruff + eslint + tsc), `make gen-api` (regenerate the typed web
 client after changing the API; CI fails if you forget).

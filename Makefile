@@ -1,4 +1,4 @@
-.PHONY: setup dev api web test lint gen-api check-api
+.PHONY: setup dev api web tunnel test lint gen-api check-api
 
 setup:            ## install Python (uv) and web (npm) dependencies
 	uv sync
@@ -13,6 +13,9 @@ api:
 
 web:
 	npm --prefix apps/web run dev -- --hostname 0.0.0.0
+
+tunnel:           ## HTTPS URL for your phone (run alongside make dev; needs: brew install cloudflared)
+	cloudflared tunnel --no-autoupdate --url http://localhost:3000
 
 test:
 	uv run pytest -q
