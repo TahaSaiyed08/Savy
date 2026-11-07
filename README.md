@@ -8,7 +8,7 @@ receipts), with the cheapest store for the whole basket. Mobile-first PWA, HackC
 
 ## Setup (every teammate)
 
-Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, make, git.
+Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, [make](https://gnuwin32.sourceforge.net/packages/make.htm), git.
 WS1 also needs the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
 
 ```sh
