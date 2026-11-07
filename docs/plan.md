@@ -8,12 +8,12 @@ thing behind a frozen interface, so nobody blocks anybody.
 
 ## Frozen interfaces
 
-| Between | Interface | Lives in | Guarded by |
-| --- | --- | --- | --- |
-| 1 ↔ 2 | Table DDL for `realdeal.core` | `databricks/sql/ddl.sql`, `views.sql`, pipeline table definitions | `apps/api/models.py` mirrors every column |
-| 2 ↔ 3 | OpenAPI schema | `apps/api/models.py` + `main.py` → `apps/web/openapi.json` → `apps/web/src/lib/api-schema.ts` | CI `make check-api` fails if the client is stale |
-| 3 ↔ 4 | Component list: `LargeTitle`, `InsetGroup`, `Row`, `Status`, `TabBar` + tokens | `apps/web/src/components/ui.tsx`, `TabBar.tsx`, `src/app/globals.css` | Design changes tokens and Figma; Frontend keeps the props |
-| 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts | `shared/prompts/*.v1.md`, `shared/units.py` | `databricks/test_prompt_sync.py`, `shared/test_units.py` |
+| Between          | Interface                                                                      | Lives in                                                                                      | Guarded by                                                |
+| ---------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, `views.sql`, pipeline table definitions                             | `apps/api/models.py` mirrors every column                 |
+| 2 ↔ 3            | OpenAPI schema                                                                 | `apps/api/models.py` + `main.py` → `apps/web/openapi.json` → `apps/web/src/lib/api-schema.ts` | CI `make check-api` fails if the client is stale          |
+| 3 ↔ 4            | Component list: `LargeTitle`, `InsetGroup`, `Row`, `Status`, `TabBar` + tokens | `apps/web/src/components/ui.tsx`, `TabBar.tsx`, `src/app/globals.css`                         | Design changes tokens and Figma; Frontend keeps the props |
+| 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts                                             | `shared/prompts/*.v1.md`, `shared/units.py`                                                   | `databricks/test_prompt_sync.py`, `shared/test_units.py`  |
 
 Changing a frozen interface: add, don't rename or remove. If you must break it, post in the team chat first, then
 change both sides in one PR.
@@ -27,7 +27,7 @@ Branch as `ws<N>/<topic>`, e.g. `ws1/ai-query`. Keep PRs small; `main` must stay
 
 ## Workstream 1: Data / Pipeline
 
-Owner: _unclaimed_
+Owner: krish-arora-88
 
 **Must not break:** column names and types in `databricks/sql/ddl.sql` and the pipeline's `flyer_items` /
 `weekly_prices` (FastAPI and `my_deals` read them); the Volume path layout `flyers/<store>/<week_start>/<page_no>.jpg`;

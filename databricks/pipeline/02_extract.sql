@@ -23,6 +23,7 @@ Return ONLY a JSON object of the form {"items": [ ... ]} where each item has:
 - confidence: number from 0 to 1, your confidence that every field above is correct
 Do not invent items, sizes or prices that are not visible. Use null instead of guessing.',
     files => content,
-    responseFormat => 'STRUCT<items: ARRAY<STRUCT<brand: STRING, item: STRING, variant: STRING, size_qty: DOUBLE, size_unit: STRING, price: DOUBLE, confidence: DOUBLE, raw_text: STRING, bbox: ARRAY<DOUBLE>>>>'
+    -- The top-level field must be a STRUCT (ai_query rejects ARRAY there); the response JSON is {"items": [...]}.
+    responseFormat => 'STRUCT<result: STRUCT<items: ARRAY<STRUCT<brand: STRING, item: STRING, variant: STRING, size_qty: DOUBLE, size_unit: STRING, price: DOUBLE, confidence: DOUBLE, raw_text: STRING, bbox: ARRAY<DOUBLE>>>>>'
   ) AS response
 FROM STREAM(flyer_pages);
