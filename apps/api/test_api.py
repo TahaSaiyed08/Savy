@@ -67,3 +67,15 @@ def test_basket_totals_are_sane_for_counted_items():
     eggs = _user(item="eggs", variant="large", size_qty=12, size_unit="ea")
     b = logic.basket([eggs], logic.deals_for([eggs], FLYER_ITEMS))
     assert {s.store: s.total for s in b.stores}["No Frills"] == 3.99
+
+
+def test_intake_is_rate_limited_per_ip(monkeypatch):
+    from apps.api import main
+
+    monkeypatch.setattr(main, "INTAKE_LIMIT", 3)
+    main._hits.clear()
+    body = {"text": "milk"}
+    codes = [c.post("/intake/manual", headers=H, json=body).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 429]
+    assert c.get("/deals", headers=H).status_code == 200  # reads are never limited
+    main._hits.clear()
