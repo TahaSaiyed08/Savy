@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Secrets and local state
+.env
+.databricks/
+.remember/
+.DS_Store

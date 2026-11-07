@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* HIG design tokens. Values are iOS system colors; Design owns these, components only reference them. */
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --bg: #f2f2f7; /* systemGroupedBackground */
+  --elevated: #ffffff; /* secondarySystemGroupedBackground */
+  --label: #000000;
+  --label-2: rgb(60 60 67 / 0.6);
+  --separator: rgb(60 60 67 / 0.29);
+  --tint: #248a3d; /* systemGreen, accessible variant: savings */
+  --destructive: #ff3b30;
+  --tap: 2.75rem; /* 44pt at default text size; scales with Dynamic Type */
+  --motion: 180ms; /* HIG: transitions under 200ms */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --elevated: #1c1c1e;
+    --label: #ffffff;
+    --label-2: rgb(235 235 245 / 0.6);
+    --separator: rgb(84 84 88 / 0.6);
+    --tint: #30d158;
+    --destructive: #ff453a;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-system);
+  --color-bg: var(--bg);
+  --color-elevated: var(--elevated);
+  --color-label: var(--label);
+  --color-label-2: var(--label-2);
+  --color-separator: var(--separator);
+  --color-tint: var(--tint);
+  --color-destructive: var(--destructive);
+  --spacing-tap: var(--tap);
+  --default-transition-duration: var(--motion);
+}
+
+html {
+  font-family: var(--font-system);
+  -webkit-text-size-adjust: 100%;
+  color-scheme: light dark;
+}
+/* Dynamic Type on iOS: rem follows the user's text size setting. */
+@supports (font: -apple-system-body) {
+  html {
+    font: -apple-system-body;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--label);
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}

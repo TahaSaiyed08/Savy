@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "devhub-docs": {
+      "type": "http",
+      "url": "https://developers.databricks.com/api/mcp"
+    }
+  }
+}

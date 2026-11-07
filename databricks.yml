@@ -1,0 +1,35 @@
+# Databricks Asset Bundle: the one Lakeflow pipeline (Free Edition allows one per type).
+# Deploy: databricks bundle deploy && databricks bundle run realdeal_flyers
+bundle:
+  name: realdeal
+
+variables:
+  model:
+    description: Vision model endpoint for ai_query (11:00 go/no-go picks this)
+    default: system.ai.llama-4-maverick
+
+sync:
+  exclude:
+    - apps/web/**
+    - .venv/**
+    - "**/node_modules/**"
+
+resources:
+  pipelines:
+    realdeal_flyers:
+      name: realdeal-flyers
+      catalog: realdeal
+      schema: core
+      serverless: true
+      libraries:
+        - file: {path: databricks/pipeline/01_bronze.py}
+        - file: {path: databricks/pipeline/02_extract.sql}
+        - file: {path: databricks/pipeline/03_silver_gold.py}
+      configuration:
+        realdeal.model: ${var.model}
+        realdeal.repo_root: ${workspace.file_path}  # so the pipeline can import shared/
+
+targets:
+  dev:
+    mode: development
+    default: true
