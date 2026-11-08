@@ -135,6 +135,7 @@ def put(postal: str, rows: list[FlyerItem]) -> None:
 
 
 def ready(postal: str) -> bool:
+    # "Ready" means we can answer: either there are rows, or a download already finished (even finding nothing).
     f = feed(postal)
     return bool(f.rows) or (f.fetched_at is not None and not f.refreshing)
 
@@ -144,6 +145,7 @@ def _spawn(postal: str) -> None:
 
 
 def _wants_refresh(f: Feed) -> bool:
+    # Due when never downloaded, or a day old with no attempt in the last 10 minutes.
     if f.refreshing:
         return False
     if f.fetched_at is None:
@@ -155,11 +157,14 @@ def _wants_refresh(f: Feed) -> bool:
 def items(postal: str) -> list[FlyerItem]:
     """Listings still valid today near this postal code. Empty while its first fetch runs; a copy that has gone stale
     (say, the API was off for days) is served as it is while a fresh one downloads."""
+    # This is the read path every request takes. It never waits: it starts a background download when one is due, and
+    # returns what it has right now.
     f = feed(postal)
     if _wants_refresh(f):
         f.tried_at = datetime.now(UTC)
         _spawn(postal)
     today = date.today()
+    # Hide expired listings. With no explicit end date, assume the flyer runs for its week.
     return [r for r in f.rows if (r.valid_to or r.week_start + timedelta(days=6)) >= today]
 
 
@@ -182,6 +187,8 @@ def sibling_pages(tile: FlyerItem) -> list[str]:
     return []
 
 
+# Real page images. Page ids look like flipp-<flyer id>-<page number>. Flipp doesn't store a page as one file, so it
+# is assembled from a grid of small tiles and cached on disk (see shared/flipp.render_page).
 _PAGE_ID = re.compile(r"flipp-(\d+)-(\d+)")
 _page_locks: dict[str, threading.Lock] = {}
 
@@ -205,6 +212,7 @@ def page_aspect(page_id: str) -> float | None:
     found = _page_source(page_id)
     if not found:
         return None
+    # The page's rectangle in Flipp's coordinate space, which is also the space the tile boxes were measured in.
     left, right, top, bottom = found[0]["pages"][str(found[1])]
     return round((right - left) / (top - bottom), 4)
 
@@ -221,13 +229,14 @@ def page_jpeg(page_id: str) -> bytes | None:
     path = _page_file(page_id)
     with _lock:
         lock = _page_locks.setdefault(page_id, threading.Lock())
+    # One lock per page: if two people open the same page together, the second waits and reuses the first's file.
     with lock:  # two people opening the same page download its tiles once
         if path.exists():
             return path.read_bytes()
         jpeg = flipp.render_page(*found)
         if jpeg:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
+            tmp = path.with_suffix(".tmp")  # write-then-rename, so a half-written image is never served
             tmp.write_bytes(jpeg)
             tmp.replace(path)
         return jpeg
