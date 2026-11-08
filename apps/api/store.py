@@ -179,6 +179,17 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
     return new
 
 
+def delete_item(user_id: UUID, user_item_id: str) -> None:
+    if MOCK:
+        items = _mock_items(user_id)
+        _items[user_id] = [i for i in items if i.user_item_id != user_item_id]
+        return
+    from apps.api import databricks_sql as db
+
+    db.execute("DELETE FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id",
+               user_id=str(user_id), user_item_id=user_item_id)
+
+
 def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
     """Receipt photo to the uploads Volume plus a receipts row. Runs after the response; failures are only logged."""
     if MOCK:

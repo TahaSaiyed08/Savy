@@ -139,6 +139,11 @@ def save_items(user_id: UserId, body: SaveItems) -> list[UserItem]:
     return store.add_items(user_id, body)
 
 
+@app.delete("/items/{user_item_id}", status_code=204)
+def delete_item(user_id: UserId, user_item_id: str) -> None:
+    store.delete_item(user_id, user_item_id)
+
+
 @app.get("/deals")
 def get_deals(user_id: UserId) -> list[Deal]:
     return store.list_deals(user_id)

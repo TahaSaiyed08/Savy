@@ -30,4 +30,12 @@ jobs:
         run: make check-api
       - run: npm --prefix apps/web run lint
       - run: npm --prefix apps/web run typecheck
+      - run: npm --prefix apps/web run test
       - run: npm --prefix apps/web run build
+      - run: touch .env
+      - run: npx --prefix apps/web playwright install --with-deps chromium
+      - run: npm --prefix apps/web run test:e2e
+        env:
+          CI: "1"
+          REALDEAL_MOCK: "1"
+          EXTRACTOR: "mock"

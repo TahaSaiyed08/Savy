@@ -6,12 +6,31 @@
   --bg: #f2f2f7; /* systemGroupedBackground */
   --elevated: #ffffff; /* secondarySystemGroupedBackground */
   --label: #000000;
-  --label-2: rgb(60 60 67 / 0.6);
+  /* iOS's own secondaryLabel (0.6) computes to ~3.3-3.4:1 against --bg/--elevated -- below WCAG AA's 4.5:1
+     for normal text. 0.75 clears both (~4.9:1 on --bg, ~5.2:1 on --elevated) while staying visually
+     "secondary" next to --label. Dark mode's 0.6 already clears AA against black and elevated (~6:1+), so
+     it's left as-is. */
+  --label-2: rgb(60 60 67 / 0.75);
   --separator: rgb(60 60 67 / 0.29);
   --tint: #248a3d; /* systemGreen, accessible variant: savings */
   --destructive: #ff3b30;
   --tap: 2.75rem; /* 44pt at default text size; scales with Dynamic Type */
   --motion: 180ms; /* HIG: transitions under 200ms */
+
+  /* Intake confirm: low-confidence items flagged for review (systemOrange family). */
+  --warning-bg: #fff7e8;
+  --warning-border: #fed7aa;
+  --warning-text: #9a3412;
+  /* Deal savings badges, "exact match" accents. */
+  --savings-bg: #ecfdf5;
+  --savings-border: #a7f3d0;
+  --savings-text: #166534;
+
+  /* Elevation. Raw values, remapped below; components use the shadow-* utilities, never these directly. */
+  --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04); /* InsetGroup, cards */
+  --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15); /* bottom sheet */
+  --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07); /* chips, thumbnails */
+  --shadow-tint-raw: 0 8px 18px 0 rgba(36, 138, 61, 0.2); /* primary button, selected chip */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,7 +42,59 @@
     --separator: rgb(84 84 88 / 0.6);
     --tint: #30d158;
     --destructive: #ff453a;
+    --warning-bg: rgb(255 159 10 / 0.12);
+    --warning-border: rgb(255 159 10 / 0.3);
+    --warning-text: #ff9f0a;
+    --savings-bg: #13351d;
+    --savings-border: transparent;
+    --savings-text: #30d158;
+    --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
+    --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
+    --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
+    --shadow-tint-raw: 0 8px 18px 0 rgba(48, 209, 88, 0.25);
   }
+}
+
+/* Dev-only state gallery: manual theme override independent of the OS setting. */
+:root[data-force-theme="dark"] {
+  --bg: #000000;
+  --elevated: #1c1c1e;
+  --label: #ffffff;
+  --label-2: rgb(235 235 245 / 0.6);
+  --separator: rgb(84 84 88 / 0.6);
+  --tint: #30d158;
+  --destructive: #ff453a;
+  --warning-bg: rgb(255 159 10 / 0.12);
+  --warning-border: rgb(255 159 10 / 0.3);
+  --warning-text: #ff9f0a;
+  --savings-bg: #13351d;
+  --savings-border: transparent;
+  --savings-text: #30d158;
+  --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
+  --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
+  --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(48, 209, 88, 0.25);
+  color-scheme: dark;
+}
+:root[data-force-theme="light"] {
+  --bg: #f2f2f7;
+  --elevated: #ffffff;
+  --label: #000000;
+  --label-2: rgb(60 60 67 / 0.75);
+  --separator: rgb(60 60 67 / 0.29);
+  --tint: #248a3d;
+  --destructive: #ff3b30;
+  --warning-bg: #fff7e8;
+  --warning-border: #fed7aa;
+  --warning-text: #9a3412;
+  --savings-bg: #ecfdf5;
+  --savings-border: #a7f3d0;
+  --savings-text: #166534;
+  --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15);
+  --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(36, 138, 61, 0.2);
+  color-scheme: light;
 }
 
 @theme inline {
@@ -35,6 +106,16 @@
   --color-separator: var(--separator);
   --color-tint: var(--tint);
   --color-destructive: var(--destructive);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-warning-text: var(--warning-text);
+  --color-savings-bg: var(--savings-bg);
+  --color-savings-border: var(--savings-border);
+  --color-savings-text: var(--savings-text);
+  --shadow-card: var(--shadow-card-raw);
+  --shadow-sheet: var(--shadow-sheet-raw);
+  --shadow-soft: var(--shadow-soft-raw);
+  --shadow-tint: var(--shadow-tint-raw);
   --spacing-tap: var(--tap);
   --default-transition-duration: var(--motion);
 }

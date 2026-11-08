@@ -334,6 +334,50 @@
         }
       }
     },
+    "/items/{user_item_id}": {
+      "delete": {
+        "summary": "Delete Item",
+        "operationId": "delete_item_items__user_item_id__delete",
+        "parameters": [
+          {
+            "name": "user_item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Item Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "UUID generated on the device",
+              "title": "X-User-Id"
+            },
+            "description": "UUID generated on the device"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/deals": {
       "get": {
         "summary": "Get Deals",
@@ -595,6 +639,18 @@
               }
             ],
             "title": "Unit"
+          },
+          "week_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start"
           }
         },
         "type": "object",
