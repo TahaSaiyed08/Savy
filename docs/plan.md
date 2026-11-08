@@ -73,6 +73,8 @@ Owner: primenumberhater666
 6. Voice: set `ELEVENLABS_API_KEY`; confirm `/intake/voice` with a webm from Safari and Chrome.
 7. If WS1 says `ai_query` works: implement `DatabricksAIExtractor` (upload → `ai_query` over `read_files`).
    If it doesn't: write flyer extractions from FastAPI to `flyer_extractions` with the same JSON shape.
+   Done: `ai_query` works, so `DatabricksAIExtractor` is implemented as opt-in (`EXTRACTOR=databricks`); Claude stays
+   the default because it reads abbreviated receipt lines more accurately and about twice as fast.
 8. Weekly re-match: nothing to do; matches are computed on every read against flyers valid today.
 9. Optional: host FastAPI as a Databricks App (3 apps max, auto-stop after 24 h, restart before judging).
 

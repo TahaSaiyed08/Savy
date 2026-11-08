@@ -13,7 +13,7 @@ import anthropic
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response, UploadFile
 
 from apps.api import flyers_live, genie, logic, store, stt
-from apps.api.extractors import Extractor, get_extractor
+from apps.api.extractors import ExtractionServiceError, Extractor, get_extractor
 from apps.api.models import (
     AskRequest,
     AskResponse,
@@ -140,6 +140,9 @@ def _extract(ext: Extractor, mode: Mode, **kw) -> Extraction:
         return ext.extract(mode, **kw)
     except anthropic.APIError as e:  # status errors and connection/timeouts alike
         raise HTTPException(502, f"Extraction service error: {e.message}") from e
+    except ExtractionServiceError as e:  # Databricks warehouse/model/upload; details stay in the log
+        log.warning("extraction service failed for %s", mode, exc_info=True)
+        raise HTTPException(502, "Extraction service error; try again") from e
     except NotImplementedError:
         raise
     except RuntimeError as e:  # refusal or unparseable output

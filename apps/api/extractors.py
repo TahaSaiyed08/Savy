@@ -1,6 +1,11 @@
 """extract(mode, image|text) -> Extraction. Same schema and prompts as the pipeline's ai_query."""
 import base64
+import io
+import json
+import logging
 import os
+import re
+import uuid
 from typing import Protocol
 
 from fastapi import HTTPException
@@ -8,6 +13,8 @@ from fastapi import HTTPException
 from apps.api.models import ExtractedItem, Extraction, Mode
 from shared import load_prompt
 from shared.units import normalize_unit
+
+log = logging.getLogger(__name__)
 
 
 class Extractor(Protocol):
@@ -60,15 +67,72 @@ class ClaudeExtractor:
         return r.parsed_output
 
 
-class DatabricksAIExtractor:
-    """ai_query on the workspace, so receipts and flyers share one model endpoint.
+class ExtractionServiceError(Exception):
+    """The extraction backend itself failed (warehouse, model endpoint, upload): a 502, not the photo's fault."""
 
-    TODO(workstream 2): upload the image to /Volumes/realdeal/core/uploads/<uuid> via the SDK, then run
-    databricks/sql/ai_query_flyer_page.sql with the receipt/product prompt and read_files(<path>).
+
+_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+_RESPONSE_FORMAT = json.dumps({"type": "json_schema", "json_schema": {
+    "name": "extraction", "strict": True, "schema": Extraction.model_json_schema()}})
+
+
+class DatabricksAIExtractor:
+    """ai_query on the workspace (opt-in: EXTRACTOR=databricks). Same prompts and Extraction schema as Claude.
+
+    Images go to the uploads Volume and are read with read_files, then deleted; text modes send the text alone.
+    Measured on the demo receipt: ~25 s on a warm warehouse (Claude ~12 s), right prices and total, but weaker on
+    abbreviated lines and overconfident when wrong, so Claude stays the default.
     """
 
+    UPLOADS = "/Volumes/realdeal/core/uploads/extract"
+
+    def __init__(self) -> None:
+        missing = [v for v in ("DATABRICKS_HOST", "DATABRICKS_WAREHOUSE_ID") if not os.getenv(v)]
+        if missing:
+            raise RuntimeError(f"EXTRACTOR=databricks needs {', '.join(missing)}")
+        self.model = os.getenv("DATABRICKS_EXTRACT_MODEL", "databricks-llama-4-maverick")
+        if not re.fullmatch(r"[\w.-]+", self.model):  # it's inlined in the SQL: endpoint names can't be parameters
+            raise ValueError(f"DATABRICKS_EXTRACT_MODEL={self.model!r} isn't a serving endpoint name")
+
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
-        raise NotImplementedError("DatabricksAIExtractor: see docstring; use EXTRACTOR=claude meanwhile")
+        from apps.api import databricks_sql as db
+
+        if not image:
+            sql = f"SELECT ai_query('{self.model}', concat(:prompt, '\\n\\n', :text), responseFormat => :fmt) AS r"
+            return self._parse(self._run(db, sql, prompt=load_prompt(mode), text=text or "", fmt=_RESPONSE_FORMAT))
+        media_type = sniff_media_type(image)
+        if media_type is None:
+            raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
+                                     "(iPhone: Settings > Camera > Formats > Most Compatible)")
+        path = f"{self.UPLOADS}/{uuid.uuid4()}.{_EXT[media_type]}"
+        try:
+            try:
+                db._client().files.upload(path, io.BytesIO(image), overwrite=False)
+            except Exception as e:
+                raise ExtractionServiceError(f"upload to {self.UPLOADS} failed: {e}") from e
+            sql = (f"SELECT ai_query('{self.model}', :prompt, files => content, responseFormat => :fmt) AS r "
+                   "FROM read_files(:path, format => 'binaryFile')")
+            return self._parse(self._run(db, sql, prompt=load_prompt(mode), fmt=_RESPONSE_FORMAT, path=path))
+        finally:
+            try:
+                db._client().files.delete(path)
+            except Exception:
+                log.warning("couldn't delete %s", path, exc_info=True)
+
+    @staticmethod
+    def _run(db, sql: str, **params) -> list[dict]:
+        try:
+            return db.run_long(sql, **params)
+        except Exception as e:
+            raise ExtractionServiceError(f"ai_query failed: {e}") from e
+
+    @staticmethod
+    def _parse(rows: list[dict]) -> Extraction:
+        raw = rows[0].get("r") if rows else None
+        try:
+            return Extraction.model_validate_json(raw or "")
+        except ValueError as e:  # the model answered, but not in the schema: same as a Claude refusal (422)
+            raise RuntimeError(f"ai_query returned no usable extraction: {str(raw)[:200]}") from e
 
 
 class MockExtractor:
