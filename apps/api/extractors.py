@@ -17,12 +17,16 @@ from shared.units import normalize_unit
 log = logging.getLogger(__name__)
 
 
+# An extractor turns a photo or a line of text into candidate items. Three interchangeable implementations sit behind
+# this one interface (Claude, Databricks ai_query, and a canned mock), and get_extractor() picks one at startup.
 class Extractor(Protocol):
     def extract(
         self, mode: Mode, *, image: bytes | None = None, media_type: str = "image/jpeg", text: str | None = None
     ) -> Extraction: ...
 
 
+# The first bytes of a file say what it really is. Phones and browsers often mislabel uploads (HEIC called JPEG), and
+# the model APIs reject a wrong type, so the real type is detected rather than trusted.
 _MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
 
 
@@ -46,6 +50,7 @@ class ClaudeExtractor:
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
+        # A message to Claude is a list of parts: the picture (if any) first, then the text instruction.
         content: list[dict] = []
         if image:
             media_type = sniff_media_type(image)
@@ -55,6 +60,7 @@ class ClaudeExtractor:
             data = base64.standard_b64encode(image).decode()
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
+        # `parse` makes the SDK validate the reply against Extraction, so a malformed answer fails here, not later.
         r = self.client.messages.parse(
             model=self.model,
             max_tokens=16000,
@@ -62,6 +68,7 @@ class ClaudeExtractor:
             messages=[{"role": "user", "content": content}],
             output_format=Extraction,
         )
+        # A refusal or empty parse becomes a RuntimeError, which the API reports to the app as a 422 "couldn't read".
         if r.stop_reason == "refusal" or r.parsed_output is None:
             raise RuntimeError(f"extraction failed: stop_reason={r.stop_reason}")
         return r.parsed_output
