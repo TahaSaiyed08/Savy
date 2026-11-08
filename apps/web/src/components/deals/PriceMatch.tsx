@@ -208,7 +208,7 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
             href={listing.storeUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex min-h-tap shrink-0 items-center gap-1 text-[15px] font-semibold text-tint"
+            className="flex min-h-tap shrink-0 items-center gap-1 text-[15px] font-semibold text-label underline underline-offset-[3px]"
           >
             Original flyer
             <ExternalLink size={15} />
@@ -218,7 +218,7 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <PriceTag price={listing.price} regular={listing.regularPrice} large />
-        {!!saves && <span className="rounded-full bg-tint-soft px-2.5 py-1 text-[13px] font-semibold text-tint">{money(saves)} less than next store</span>}
+        {!!saves && <span className="rounded-full border border-savings-border bg-savings-bg px-2.5 py-1 text-[13px] font-semibold text-savings-text">{money(saves)} less than next store</span>}
       </div>
       {range && (
         <p className={`flex items-center gap-1.5 text-[15px] ${left != null && left >= 0 && left <= 2 ? "text-clock" : "text-label-2"}`}>
@@ -274,7 +274,7 @@ function PriceMatchScreen({ target, onClose }: { target: MatchTarget; onClose: (
     <div className="fixed inset-0 z-40 bg-bg">
       <div className="mx-auto flex h-full max-w-xl flex-col" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
         <header className="relative flex h-11 shrink-0 items-center">
-          <button type="button" onClick={back} className="flex h-11 items-center gap-0.5 pl-2 pr-3 text-[17px] text-tint">
+          <button type="button" onClick={back} className="flex h-11 items-center gap-0.5 pl-2 pr-3 text-[17px] text-label">
             <ChevronLeft size={22} />
             {picked && !target.listing ? "Closest" : target.from}
           </button>
@@ -296,7 +296,7 @@ function PriceMatchScreen({ target, onClose }: { target: MatchTarget; onClose: (
                 <PrimaryButton onClick={target.onAddToPantry} disabled={target.inPantry}>
                   {target.inPantry ? "In pantry" : "Add to pantry"}
                 </PrimaryButton>
-                <button type="button" onClick={target.onAddToBasket} className="h-[50px] w-full rounded-[14px] bg-fill text-[17px] font-semibold text-tint">
+                <button type="button" onClick={target.onAddToBasket} className="h-[50px] w-full rounded-[14px] bg-fill text-[17px] font-semibold text-label">
                   Add to basket
                 </button>
               </div>

@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, SearchField, Status } from "@/components/ui";
+import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, SearchField, Status, ToolbarText, money } from "@/components/ui";
 import { Plus, ReceiptText } from "@/components/icons";
 import { AddMethodsSheet, type AddMethod } from "@/components/list/AddMethodsSheet";
 import { IntakeError, ReceiptLoading } from "@/components/list/ReceiptLoading";
@@ -10,7 +10,6 @@ import { TypeOrSaySheet } from "@/components/list/TypeOrSaySheet";
 import { EditItemSheet } from "@/components/list/EditItemSheet";
 import { ListRow } from "@/components/list/ListRow";
 import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/Toast";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { downscaleImage } from "@/lib/downscale";
@@ -40,6 +39,7 @@ export default function Pantry() {
   const [saveError, setSaveError] = useState<string | undefined>();
   const [match, setMatch] = useState<MatchTarget | null>(null);
   const [search, setSearch] = useState("");
+  const [editMode, setEditMode] = useState(false);
   const toast = useToast();
   const [editingItem, setEditingItem] = useState<Schemas["ListItem"] | null>(null);
   const receiptInput = useRef<HTMLInputElement>(null);
@@ -52,11 +52,14 @@ export default function Pantry() {
   const shown = (items ?? []).filter((i) => !needle || [i.brand, i.item, i.variant].join(" ").toLowerCase().includes(needle));
   const onSale = shown.filter((i) => i.cheapest);
   const others = shown.filter((i) => !i.cheapest);
+  const dealCount = (items ?? []).filter((i) => i.cheapest).length;
+  const youCouldSave = (items ?? []).reduce((sum, i) => (i.cheapest && i.cheapest.regular_price != null && i.cheapest.price != null && i.cheapest.regular_price > i.cheapest.price ? sum + (i.cheapest.regular_price - i.cheapest.price) : sum), 0);
 
   const row = (i: Schemas["ListItem"]) => (
     <ListRow
       key={i.user_item_id}
       item={i}
+      editMode={editMode}
       onTap={() => setMatch(matchFor("Pantry", i))}
       onToggleBasket={() => {
         const next = !i.in_basket;
@@ -181,23 +184,37 @@ export default function Pantry() {
     <>
       <LargeTitle
         title="Pantry"
-        leading={<ThemeToggle />}
-        action={
+        action={!!items?.length && <ToolbarText onClick={() => setEditMode((e) => !e)}>{editMode ? "Done" : "Edit"}</ToolbarText>}
+        primary={
           <button
             type="button"
             onClick={() => setFlow({ step: "methods" })}
             aria-label="Add item"
-            className="flex size-11 items-center justify-center rounded-full border border-separator bg-bg text-tint"
+            className="flex h-11 min-w-[52px] items-center justify-center rounded-full text-tint"
           >
-            <Plus size={27} />
+            <Plus size={22} />
           </button>
         }
       />
 
       {!!items?.length && (
-        <p className="-mt-1 px-4 pb-3 text-[13px] text-label-2">
-          {items.length} item{items.length === 1 ? "" : "s"} · {items.filter((i) => i.cheapest).length} on sale
-        </p>
+        <div className="mx-4 mb-3 flex items-center justify-between rounded-[16px] border border-soft-border bg-soft px-4 py-3.5">
+          {youCouldSave > 0 ? (
+            <div>
+              <p className="text-[13px] text-label-2">You could save this week</p>
+              <p className="text-[30px] leading-tight font-bold tracking-tight text-savings-text tabular-nums">{money(youCouldSave)}</p>
+            </div>
+          ) : (
+            <p className="text-[15px] text-label-2">
+              {items.length} item{items.length === 1 ? "" : "s"} · {dealCount} on sale
+            </p>
+          )}
+          {dealCount > 0 && (
+            <span className="rounded-full bg-tint px-3 py-1 text-[13px] font-semibold text-on-tint">
+              {dealCount} deal{dealCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
       )}
       {!!items?.length && <SearchField value={search} onChange={setSearch} placeholder="Search pantry" />}
       {loading && !items && <ListSkeleton />}

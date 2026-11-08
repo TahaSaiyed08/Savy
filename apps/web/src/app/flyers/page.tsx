@@ -3,15 +3,16 @@
 // Price Match screen as Pantry and Basket.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PriceMatch, fromListing, type MatchTarget } from "@/components/deals/PriceMatch";
-import { Check, CirclePlus, Clock, MapPin, Tag } from "@/components/icons";
+import { Check, ChevronDown, CirclePlus, Clock, MapPin, Tag } from "@/components/icons";
 import { AskButton, AskSheet } from "@/components/AskSheet";
 import { LocationSheet } from "@/components/LocationSheet";
 import { PriceTag } from "@/components/PriceTag";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { StoreDot } from "@/components/StoreDot";
 import { Thumb } from "@/components/Thumb";
 import { useToast } from "@/components/Toast";
 import { Chip, EmptyState, LargeTitle, ListSkeleton, RetryButton, SearchField, SkeletonRow, Status, money } from "@/components/ui";
 import { api, type Schemas } from "@/lib/api";
+import { categoryOf } from "@/lib/category";
 import { daysLeft, fullName, itemMeta, weekday } from "@/lib/format";
 import { formatPostal, setPostal } from "@/lib/postal";
 import { useItems } from "@/lib/use-items";
@@ -169,19 +170,15 @@ export default function Flyers() {
   const replacing = state === "replacing";
   return (
     <>
-      <LargeTitle
-        title="Flyers"
-        leading={<ThemeToggle />}
-        action={
-          <div className="flex items-center gap-2">
-            {place?.ask_enabled && <AskButton onClick={() => setAsking(true)} />}
-            <button type="button" onClick={() => setPicking(true)} aria-label="Change flyer location" className="mb-1 flex min-h-tap items-center gap-1 rounded-full bg-fill px-3 text-[15px] font-medium text-tint">
-              <MapPin size={16} />
-              {place ? formatPostal(place.postal) : "Location"}
-            </button>
-          </div>
-        }
-      />
+      <LargeTitle title="Flyers" primary={place?.ask_enabled ? <AskButton onClick={() => setAsking(true)} /> : undefined} />
+      <div className="flex items-center justify-between px-4 text-[13px] text-label-2">
+        <button type="button" onClick={() => setPicking(true)} aria-label="Change flyer location" className="flex min-h-tap items-center gap-1.5 text-[15px] font-semibold text-label">
+          <MapPin size={18} />
+          {place ? formatPostal(place.postal) : "Location"}
+          <ChevronDown size={16} />
+        </button>
+        {stores.length > 0 && <span>{stores.length} stores near you</span>}
+      </div>
       <SearchField value={query} onChange={setQuery} placeholder="Search deals" />
       <div className="flex gap-2 overflow-x-auto px-4 pb-2">
         {[ALL, ...stores].map((s) => (
@@ -189,22 +186,37 @@ export default function Flyers() {
         ))}
       </div>
       {categories.length > 0 && (
-        <div role="group" aria-label="Categories" className="flex gap-2 overflow-x-auto px-4 pb-2">
-          {["Everything", ...categories].map((c) => (
-            <Chip key={c} label={c} selected={(c === "Everything" ? ALL : c) === category} onClick={() => setCategory(c === "Everything" ? ALL : c)} />
-          ))}
+        <div role="group" aria-label="Categories" className="mb-1 flex gap-5 overflow-x-auto border-b border-separator px-4">
+          {["Everything", ...categories].map((c) => {
+            const on = (c === "Everything" ? ALL : c) === category;
+            return (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setCategory(c === "Everything" ? ALL : c)}
+                className={`-mb-px flex h-11 shrink-0 items-center whitespace-nowrap border-b-2 text-[15px] ${on ? "border-tint font-semibold text-label" : "border-transparent text-label-2"}`}
+              >
+                {c}
+              </button>
+            );
+          })}
         </div>
       )}
-      <label className="flex items-center gap-1 px-4 pb-2 text-[13px] text-label-2">
-        Sort:
-        <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="min-h-tap bg-transparent text-[13px] font-semibold text-tint outline-none">
-          {SORTS.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="flex min-h-tap items-center justify-between px-4 text-[13px] uppercase text-label-2">
+        <span>{!replacing && !fetching && total > 0 ? `${total} on sale` : ""}</span>
+        <label className="relative flex items-center gap-1 text-[15px] normal-case">
+          Sort:
+          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="min-h-tap appearance-none bg-transparent pr-5 text-[15px] font-semibold text-label outline-none">
+            {SORTS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={16} className="pointer-events-none absolute right-0 text-label" />
+        </label>
+      </div>
 
       {fetching && (
         <p role="status" className="px-6 pb-3 text-center text-[15px] text-label-2">
@@ -228,21 +240,21 @@ export default function Flyers() {
 
       {!replacing && !fetching && groups.length > 0 && (
         <section className="mx-4 mb-6">
-          <h2 className="px-3.5 pb-1.5 text-[13px] uppercase text-label-2">{total} on sale</h2>
-          <ul className="overflow-hidden rounded-[14px] bg-elevated">
+          <ul className="overflow-hidden rounded-[14px] border border-separator bg-elevated shadow-card">
             {groups.map((g) => {
               const added = inPantry(g);
               const meta = itemMeta(g);
               return (
                 <li key={g.cheapest.flyer_item_id} className="row-sep relative flex items-center" style={{ "--sep": "70px" } as React.CSSProperties}>
                   <button type="button" onClick={() => open(g)} className="flex min-h-[3.75rem] min-w-0 flex-1 items-center gap-3 py-3 pl-3.5 text-left">
-                    <Thumb src={g.cheapest.image_url} />
+                    <Thumb src={g.cheapest.image_url} category={categoryOf(g.item)} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{g.item}</span>
                       {meta && <span className="block truncate text-[15px] text-label-2">{meta}</span>}
                       <span className="block truncate text-[13px] text-label-2">
+                        <StoreDot store={g.cheapest.store} />
                         {g.cheapest.store} · <Ends validTo={g.cheapest.valid_to} />
-                        {!!g.saves_vs_next && <span className="font-semibold text-tint"> · {money(g.saves_vs_next)} less</span>}
+                        {!!g.saves_vs_next && <span className="font-semibold text-savings-text"> · {money(g.saves_vs_next)} less</span>}
                       </span>
                     </span>
                     <PriceTag price={g.cheapest.price} regular={g.cheapest.regular_price} />

@@ -1,40 +1,25 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getForcedTheme, setForcedTheme } from "@/components/ForceTheme";
 import { Moon, Sun } from "@/components/icons";
+import { setForcedTheme } from "@/components/ForceTheme";
 
-/** Light/dark switch for the header. Before the first tap it just reflects the OS setting (and keeps
- * tracking it live, via the media query); after a tap it's an explicit override, same storage ForceTheme
- * and /dev/states already use. */
+type Mode = "light" | "dark";
+
+/** Light/dark switch. Starts from the saved choice, else the OS setting; persists via ForceTheme's storage key. */
 export function ThemeToggle() {
-  const [dark, setDark] = useState(false); // SSR-safe default; corrected on mount below
-
+  const [mode, setMode] = useState<Mode>("light");
   useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const recompute = () => {
-      const forced = getForcedTheme();
-      setDark(forced === "system" ? mq.matches : forced === "dark");
-    };
-    recompute();
-    mq.addEventListener("change", recompute);
-    return () => mq.removeEventListener("change", recompute);
+    const forced = document.documentElement.dataset.forceTheme;
+    setMode(forced === "dark" || forced === "light" ? forced : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   }, []);
-
   function toggle() {
-    const next = dark ? "light" : "dark";
+    const next: Mode = mode === "dark" ? "light" : "dark";
+    setMode(next);
     setForcedTheme(next);
-    setDark(!dark);
   }
-
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-pressed={dark}
-      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-      className="flex size-11 items-center justify-center rounded-full border border-separator bg-bg text-tint transition-transform active:scale-95"
-    >
-      {dark ? <Moon size={21} /> : <Sun size={22} />}
+    <button type="button" onClick={toggle} aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} className="flex h-11 min-w-[52px] items-center justify-center rounded-full text-label-2">
+      {mode === "dark" ? <Sun size={22} /> : <Moon size={22} />}
     </button>
   );
 }

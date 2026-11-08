@@ -56,7 +56,7 @@ export function AskSheet({ open, onClose }: { open: boolean; onClose: () => void
             <p className="text-[15px] text-label-2">Ask in your own words. Genie reads this week&apos;s flyers near you and works out the answer.</p>
             <div className="flex flex-wrap gap-2">
               {EXAMPLES.map((e) => (
-                <button key={e} type="button" onClick={() => send(e)} className="min-h-tap rounded-full bg-fill px-3.5 text-left text-[15px] text-tint">
+                <button key={e} type="button" onClick={() => send(e)} className="min-h-tap rounded-full bg-fill px-3.5 text-left text-[15px] text-label">
                   {e}
                 </button>
               ))}
@@ -108,7 +108,7 @@ export function AskSheet({ open, onClose }: { open: boolean; onClose: () => void
                 )}
                 {t.answer.sql && (
                   <details className="text-[13px]">
-                    <summary className="min-h-tap cursor-pointer py-2 text-tint">Show the SQL Genie wrote</summary>
+                    <summary className="min-h-tap cursor-pointer py-2 font-semibold text-label underline underline-offset-4">Show the SQL Genie wrote</summary>
                     <pre className="overflow-x-auto rounded-[10px] bg-fill p-3 text-[12px] leading-snug">{t.answer.sql}</pre>
                   </details>
                 )}
@@ -146,8 +146,8 @@ export function AskSheet({ open, onClose }: { open: boolean; onClose: () => void
 
 export function AskButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} aria-label="Ask about deals" className="mb-1 flex min-h-tap items-center gap-1 rounded-full bg-fill px-3 text-[15px] font-medium text-tint">
-      <Sparkles size={16} />
+    <button type="button" onClick={onClick} aria-label="Ask about deals" className="flex h-11 min-w-[76px] items-center justify-center gap-1.5 rounded-full px-2 text-[15px] font-semibold text-tint">
+      <Sparkles size={18} />
       Ask
     </button>
   );

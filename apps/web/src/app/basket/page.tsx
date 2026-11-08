@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { BasketRow } from "@/components/basket/BasketRow";
 import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
 import { ChevronRight, CircleCheck, ShoppingCart } from "@/components/icons";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/Toast";
 import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, Status, money } from "@/components/ui";
 import { useItems } from "@/lib/use-items";
@@ -57,17 +56,7 @@ export default function Basket() {
 
   return (
     <>
-      <LargeTitle
-        title="Basket"
-        leading={<ThemeToggle />}
-        action={
-          done.length > 0 ? (
-            <button type="button" onClick={clearDone} className="min-h-tap text-[17px] text-tint">
-              Clear done
-            </button>
-          ) : undefined
-        }
-      />
+      <LargeTitle title="Basket" />
       {basket.length > 0 && (
         <p className="-mt-1 px-4 pb-3 text-[13px] text-label-2">
           {toGet.length} left · est. {money(estimate)}
@@ -103,11 +92,16 @@ export default function Basket() {
 
       {done.length > 0 && (
         <section className="mx-4 mb-6">
-          <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} className="flex min-h-tap items-center gap-1 px-4 text-[0.8125rem] uppercase text-label-2">
-            <ChevronRight size={14} className={`transition-transform ${collapsed ? "" : "rotate-90"}`} />
-            Done ({done.length})
-          </button>
-          {!collapsed && <ul className="overflow-hidden rounded-[14px] bg-elevated">{done.map(row)}</ul>}
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} className="flex min-h-tap items-center gap-1 px-4 text-[0.8125rem] uppercase text-label-2">
+              <ChevronRight size={14} className={`transition-transform ${collapsed ? "" : "rotate-90"}`} />
+              Done ({done.length})
+            </button>
+            <button type="button" onClick={clearDone} className="min-h-tap px-4 text-[15px] font-semibold text-label">
+              Clear done
+            </button>
+          </div>
+          {!collapsed && <ul className="overflow-hidden rounded-[14px] border border-separator bg-elevated shadow-card">{done.map(row)}</ul>}
         </section>
       )}
 

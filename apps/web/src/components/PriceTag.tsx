@@ -1,13 +1,13 @@
 import { money } from "@/components/ui";
 
-/** The yellow flyer sticker: only ever a sale price from a flyer. */
+/** A sale price from a flyer: bold green on the soft savings wash, with the old price struck through beneath. */
 export function PriceTag({ price, regular, large }: { price?: number | null; regular?: number | null; large?: boolean }) {
   const was = regular != null && price != null && regular > price ? regular : null;
   return (
     <span className={`flex ${large ? "items-center gap-2" : "flex-col items-end gap-0.5"}`} aria-label={`On sale, ${money(price)}${was ? `, was ${money(was)}` : ""}`}>
       <span
         aria-hidden
-        className={`bg-price-tag font-extrabold text-on-price-tag tabular-nums ${large ? "rounded-[9px] px-2.5 py-[3px] text-[22px]" : "rounded-[6px] px-[7px] py-0.5 text-[17px]"}`}
+        className={`border border-savings-border bg-savings-bg font-bold text-savings-text tabular-nums ${large ? "rounded-[9px] px-2.5 py-[2px] text-[22px]" : "rounded-[6px] px-[7px] py-px text-[17px]"}`}
       >
         {money(price)}
       </span>

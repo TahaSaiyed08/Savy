@@ -96,7 +96,7 @@ export function Sheet({
           <button
             type="button"
             onClick={onCancel ?? onClose}
-            className="flex h-tap min-w-[72px] items-center text-[17px] font-semibold text-tint"
+            className="flex h-tap min-w-[72px] items-center text-[17px] font-semibold text-label"
           >
             {cancelLabel}
           </button>

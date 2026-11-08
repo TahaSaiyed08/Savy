@@ -1,18 +1,34 @@
 // HIG building blocks. Component list (frozen interface with Design): LargeTitle, InsetGroup, Row, Status,
 // TabBar, plus the sheet-era additions below (EmptyState, Chip, PrimaryButton, FieldRow, UnitPicker). Design
 // changes the look via tokens in globals.css; Frontend keeps these props stable.
-import { useId, type ReactNode } from "react";
+import { Fragment, useId, type ReactNode } from "react";
 import { Loader, Search } from "@/components/icons";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
-export function LargeTitle({ title, leading, action }: { title: string; leading?: ReactNode; action?: ReactNode }) {
+/** Page title with one rounded toolbar on the right: `action` (leading, e.g. Edit), the theme switch, then `primary` (trailing, e.g. +). */
+export function LargeTitle({ title, action, primary }: { title: string; action?: ReactNode; primary?: ReactNode }) {
+  const items = [action, <ThemeToggle key="theme" />, primary].filter(Boolean);
   return (
     <header className="flex items-end justify-between px-4 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-2">
-      <div className="flex items-center gap-2">
-        {leading}
-        <h1 className="text-[2.125rem] leading-tight font-bold tracking-tight">{title}</h1>
+      <h1 className="text-[2.125rem] leading-tight font-bold tracking-tight">{title}</h1>
+      <div className="mb-0.5 flex h-11 items-center rounded-full border border-separator bg-elevated px-1">
+        {items.map((it, i) => (
+          <Fragment key={i}>
+            {i > 0 && <span aria-hidden className="h-5 w-px bg-separator" />}
+            {it}
+          </Fragment>
+        ))}
       </div>
-      {action}
     </header>
+  );
+}
+
+/** Text button for a LargeTitle toolbar slot (Edit / Done). */
+export function ToolbarText({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex h-11 min-w-[52px] items-center justify-center rounded-full px-1 text-[15px] font-semibold text-label">
+      {children}
+    </button>
   );
 }
 
@@ -20,7 +36,7 @@ export function InsetGroup({ header, footer, children }: { header?: string; foot
   return (
     <section className="mx-4 mb-6">
       {header && <h2 className="px-4 pb-1.5 text-[0.8125rem] uppercase text-label-2">{header}</h2>}
-      <ul className="overflow-hidden rounded-[14px] bg-elevated">
+      <ul className="overflow-hidden rounded-[14px] border border-separator bg-elevated shadow-card">
         {children}
       </ul>
       {footer && <p className="px-4 pt-1.5 text-[0.8125rem] text-label-2">{footer}</p>}
