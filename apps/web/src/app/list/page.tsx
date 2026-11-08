@@ -190,6 +190,7 @@ export default function MyList() {
 
       <input
         ref={receiptInput}
+        data-testid="receipt-file-input"
         type="file"
         accept="image/*"
         capture="environment"
@@ -202,6 +203,7 @@ export default function MyList() {
       />
       <input
         ref={photoInput}
+        data-testid="photo-file-input"
         type="file"
         accept="image/*"
         capture="environment"

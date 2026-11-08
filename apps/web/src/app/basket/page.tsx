@@ -8,8 +8,10 @@ import { useApi } from "@/lib/use-api";
 export default function Basket() {
   const router = useRouter();
   const { data: b, loading, error, refetch } = useApi(() => api.GET("/basket", { params: withUser() }));
-  const cheapest = b?.stores[0];
-  const totalItems = cheapest ? cheapest.matched + cheapest.missing : 0;
+  // b.stores is ordered fewest-missing-first, then cheapest within that tier (see the Basket model) — it's
+  // the best single-store pick, not necessarily the lowest dollar total across all stores.
+  const bestStore = b?.stores[0];
+  const totalItems = bestStore ? bestStore.matched + bestStore.missing : 0;
 
   return (
     <>
@@ -21,17 +23,17 @@ export default function Basket() {
         <EmptyState icon={<ShoppingCart size={52} />} title="Add items to compare stores." primaryLabel="Add items" onPrimary={() => router.push("/list")} />
       )}
 
-      {b?.cheapest_store && cheapest && (
+      {b?.cheapest_store && bestStore && (
         <>
           <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
             <div className="flex items-center justify-between">
-              <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Cheapest single store</p>
+              <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Best single store</p>
               <CircleCheck size={20} className="text-tint" />
             </div>
             <p className="text-[28px] font-bold">{b.cheapest_store}</p>
-            <p className="text-[34px] font-bold text-tint">{money(cheapest.total)}</p>
+            <p className="text-[34px] font-bold text-tint">{money(bestStore.total)}</p>
             <p className="text-[15px] text-label-2">
-              {cheapest.matched} of {totalItems} items on sale
+              {bestStore.matched} of {totalItems} items on sale
             </p>
           </div>
 
