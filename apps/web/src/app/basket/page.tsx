@@ -1,106 +1,116 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { EmptyState, InsetGroup, LargeTitle, RetryButton, Row, Skeleton, Status, money } from "@/components/ui";
-import { CircleCheck, ShoppingCart } from "@/components/icons";
-import { api, withUser } from "@/lib/api";
-import { useApi } from "@/lib/use-api";
+import { useEffect, useState } from "react";
+import { BasketRow } from "@/components/basket/BasketRow";
+import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
+import { ChevronRight, CircleCheck, ShoppingCart } from "@/components/icons";
+import { useToast } from "@/components/Toast";
+import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, Status, money } from "@/components/ui";
+import { useItems } from "@/lib/use-items";
+import type { Schemas } from "@/lib/api";
 
-function BasketSkeleton() {
-  return (
-    <>
-      <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
-        <Skeleton className="h-3 w-32" />
-        <Skeleton className="h-7 w-40" />
-        <Skeleton className="h-9 w-28" />
-        <Skeleton className="h-[15px] w-44" />
-      </div>
-      <section className="mx-4 mb-6">
-        <Skeleton className="mb-1.5 ml-4 h-3 w-16" />
-        <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
-          {[0, 1, 2].map((i) => (
-            <li key={i} className="flex min-h-tap items-center gap-3 border-b border-separator px-4 py-2.5 last:border-b-0">
-              <Skeleton className="h-[17px] w-28" />
-            </li>
-          ))}
-        </ul>
-      </section>
-    </>
-  );
-}
+const COLLAPSED_KEY = "realdeal.basket.doneCollapsed";
 
+// The Pantry items moved here, as a shopping checklist. Done keeps a row here until cleared; it never leaves the Pantry.
 export default function Basket() {
   const router = useRouter();
-  const { data: b, loading, error, refetch } = useApi(() => api.GET("/basket", { params: withUser() }));
-  // b.stores is ordered fewest-missing-first, then cheapest within that tier (see the Basket model) — it's
-  // the best single-store pick, not necessarily the lowest dollar total across all stores.
-  const bestStore = b?.stores[0];
-  const totalItems = bestStore ? bestStore.matched + bestStore.missing : 0;
+  const { items, loading, error, deleteError, deleteItem, setBasket, setDone, refetch } = useItems();
+  const [match, setMatch] = useState<MatchTarget | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const toast = useToast();
+
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(COLLAPSED_KEY) === "1");
+    } catch {
+      // private mode: just start expanded
+    }
+  }, []);
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(COLLAPSED_KEY, c ? "0" : "1");
+      } catch {
+        // private mode: remembered for this visit only
+      }
+      return !c;
+    });
+  }
+
+  const basket = items?.filter((i) => i.in_basket) ?? [];
+  const toGet = basket.filter((i) => !i.done);
+  const done = basket.filter((i) => i.done);
+  const estimate = toGet.reduce((sum, i) => sum + (i.cheapest?.price ?? 0), 0);
+  const saved = (list: Schemas["ListItem"][]) => list.reduce((sum, i) => sum + (i.saves_vs_next ?? 0), 0);
+
+  const row = (i: Schemas["ListItem"]) => (
+    <BasketRow
+      key={i.user_item_id}
+      item={i}
+      onTap={() => setMatch(matchFor("Basket", i))}
+      onToggleDone={() => setDone(i.user_item_id, !i.done)}
+      onDelete={() => toast.show("Removed", deleteItem(i.user_item_id))}
+    />
+  );
+  const clearDone = () => done.forEach((i) => setBasket(i.user_item_id, false));
 
   return (
     <>
-      <LargeTitle title="Basket" />
-      {loading && (
-        <>
-          <p role="status" className="sr-only">
-            Loading…
-          </p>
-          <BasketSkeleton />
-        </>
+      <LargeTitle
+        title="Basket"
+        action={
+          done.length > 0 ? (
+            <button type="button" onClick={clearDone} className="min-h-tap text-[17px] text-tint">
+              Clear done
+            </button>
+          ) : undefined
+        }
+      />
+      {basket.length > 0 && (
+        <p className="-mt-1 px-4 pb-3 text-[13px] text-label-2">
+          {toGet.length} left · est. {money(estimate)}
+          {saved(toGet) > 0 && ` · save ${money(saved(toGet))}`}
+        </p>
       )}
+      {loading && !items && <ListSkeleton rows={5} />}
       <Status error={error} />
       {error && <RetryButton onRetry={refetch} />}
+      {deleteError && <p className="px-8 pb-4 text-center text-[13px] text-destructive">{deleteError}</p>}
 
-      {!loading && !error && b && !b.cheapest_store && (
-        <EmptyState icon={<ShoppingCart size={52} />} title="Add items to compare stores." primaryLabel="Add items" onPrimary={() => router.push("/list")} />
+      {!loading && !error && basket.length === 0 && (
+        <EmptyState
+          icon={<ShoppingCart size={52} />}
+          title="Your basket is empty"
+          subtitle="Move items here from your pantry when you're ready to shop."
+          primaryLabel="Go to pantry"
+          onPrimary={() => router.push("/list")}
+        />
       )}
 
-      {b?.cheapest_store && bestStore && (
-        <>
-          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-tint/25 bg-gradient-to-br from-savings-bg to-elevated p-5 shadow-card">
-            <div className="flex items-center justify-between">
-              <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Best single store</p>
-              <span className="flex size-6 items-center justify-center rounded-full bg-tint text-white">
-                <CircleCheck size={16} />
-              </span>
-            </div>
-            <p className="text-[28px] font-bold">{b.cheapest_store}</p>
-            <p className="text-[34px] font-bold text-tint">{money(bestStore.total)}</p>
-            <p className="text-[15px] text-label-2">
-              {bestStore.matched} of {totalItems} items on sale
-            </p>
-          </div>
-
-          <InsetGroup header="One store">
-            {b.stores.map((s, i) => (
-              <Row
-                key={s.store}
-                title={s.store}
-                subtitle={s.missing ? `${s.missing} item${s.missing > 1 ? "s" : ""} not on sale` : "Everything on your list"}
-                detail={money(s.total)}
-                accent={i === 0}
-              />
-            ))}
-          </InsetGroup>
-
-          {b.delta > 0 && <p className="-mt-4 mb-6 px-8 text-[13px] font-semibold text-tint">Split-shopping saves {money(b.delta)}.</p>}
-
-          {b.split.length > 0 && (
-            <InsetGroup header={`Split shop · ${money(b.split_total)}`}>
-              {b.split.map((l) => (
-                <Row key={l.user_item_id} title={l.item_label} subtitle={l.store} detail={money(l.cost)} />
-              ))}
-            </InsetGroup>
-          )}
-
-          {b.unmatched.length > 0 && (
-            <InsetGroup header="No deal this week">
-              {b.unmatched.map((u) => (
-                <Row key={u} title={u} />
-              ))}
-            </InsetGroup>
-          )}
-        </>
+      {basket.length > 0 && toGet.length === 0 && (
+        <EmptyState
+          icon={<CircleCheck size={52} />}
+          title="All done"
+          subtitle={saved(done) > 0 ? `Nice, you saved ${money(saved(done))} this trip.` : "Everything's ticked off."}
+          primaryLabel="Clear done items"
+          onPrimary={clearDone}
+        />
       )}
+
+      {toGet.length > 0 && <InsetGroup header={`To get (${toGet.length})`}>{toGet.map(row)}</InsetGroup>}
+
+      {done.length > 0 && (
+        <section className="mx-4 mb-6">
+          <button type="button" onClick={toggleCollapsed} aria-expanded={!collapsed} className="flex min-h-tap items-center gap-1 px-4 text-[0.8125rem] uppercase text-label-2">
+            <ChevronRight size={14} className={`transition-transform ${collapsed ? "" : "rotate-90"}`} />
+            Done ({done.length})
+          </button>
+          {!collapsed && <ul className="overflow-hidden rounded-[14px] bg-elevated">{done.map(row)}</ul>}
+        </section>
+      )}
+
+      {toast.node}
+      <PriceMatch target={match} onClose={() => setMatch(null)} />
     </>
   );
 }

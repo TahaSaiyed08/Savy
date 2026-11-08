@@ -53,5 +53,6 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE TABLE IF NOT EXISTS basket_items (
   user_id      STRING    NOT NULL,
   user_item_id STRING    NOT NULL,
-  added_at     TIMESTAMP NOT NULL
+  added_at     TIMESTAMP NOT NULL,
+  done_at      TIMESTAMP  -- set when ticked off on this trip; catalogs created earlier need ALTER TABLE ... ADD COLUMN
 );

@@ -20,6 +20,6 @@ export default defineConfig({
     timeout: 60_000,
     // Verified: exported vars override uv's --env-file, so this forces mock mode even if .env sets
     // DATABRICKS_HOST (CI's .env is just `touch`ed empty, but this makes the override explicit either way).
-    env: { REALDEAL_MOCK: "1", EXTRACTOR: "mock" },
+    env: { REALDEAL_MOCK: "1", EXTRACTOR: "mock", REALDEAL_LIVE_FLYERS: "0" }, // canned flyers: no network, fixed prices
   },
 });

@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 Mode = Literal["flyer_page", "receipt", "product", "manual"]
-Source = Literal["receipt", "photo", "manual", "voice"]
+Source = Literal["receipt", "photo", "manual", "voice", "flyer"]  # flyer: identity copied from a listing
 Field4 = Literal["brand", "item", "variant", "size"]
 # [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
 BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
@@ -69,6 +69,10 @@ class FlyerItem(BaseModel):  # Silver
     image_url: str | None = None  # Flipp: the tile's own cutout image. Volume pages: null (the page is the image)
     image_path: str | None = None  # Volume pages: the page image. Flipp: null
     page_aspect: float | None = None  # page width / height; null for Volume pages (use the image's own size)
+    regular_price: float | None = None  # Flipp's original_price, when the flyer prints one
+    conditions: str | None = None  # "Get PC Optimum 1,000 pts", "Limit 4"
+    store_url: str | None = None  # the store's own page for the item, when Flipp knows it
+    category: str | None = None  # Dairy & eggs, Produce, ...: from the AI refiner, null until it has run
 
     @field_validator("bbox", mode="before")
     @classmethod
@@ -100,6 +104,7 @@ class UserItem(BaseModel):
     added_at: datetime
     last_bought_at: datetime | None = None
     in_basket: bool = False  # from basket_items
+    done: bool = False  # basket_items.done_at is set: bought on this trip, still in the Basket's Done section
 
 
 class Receipt(BaseModel):
@@ -152,12 +157,42 @@ class Deal(BaseModel):
     bbox: BBox | None = None
     valid_from: date | None = None
     valid_to: date | None = None  # the sticky card shows these to the cashier
+    image_url: str | None = None  # the tile's cutout from the flyer
+    regular_price: float | None = None
+    conditions: str | None = None
+    flyer_url: str | None = None  # the whole original flyer, on Flipp
+    item_url: str | None = None  # the same flyer opened at this item
+    store_url: str | None = None  # the store's own page for it
+
+
+class FlyerListing(BaseModel):
+    """One store's listing, with enough to open its exact tile."""
+
+    label: str
+    store: str
+    price: float | None = None
+    unit_price: float | None = None
+    unit: str | None = None
+    flyer_item_id: str
+    page_id: str
+    page_no: int | None = None
+    bbox: BBox | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
+    image_url: str | None = None
+    regular_price: float | None = None
+    conditions: str | None = None
+    flyer_url: str | None = None
+    item_url: str | None = None
+    store_url: str | None = None
 
 
 class ListItem(UserItem):
     """A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."""
 
     cheapest: Deal | None = None
+    saves_vs_next: float | None = None  # how much less cheapest is than the next store's price for this item
+    closest: list[FlyerListing] = []  # similar listings, only when there is no exact one
     missing: list[Field4] = []  # empty (or unreadable size); all four are needed to match
 
 
@@ -172,6 +207,7 @@ class ItemPatch(BaseModel):
     size_qty: float | None = Field(None, gt=0)
     size_unit: str | None = None
     in_basket: bool | None = None
+    done: bool | None = None
 
 
 class SetBasket(BaseModel):
@@ -197,6 +233,64 @@ class PageView(BaseModel):
     image_url: str | None = None  # full page image, relative to the API (/flyer-pages/{id}/image); null for Flipp
     aspect: float | None = None  # width / height when there is no page image to size from
     tiles: list[Tile]
+    page_count: int = 1  # pages of this store's flyer that have listings
+    prev_page_id: str | None = None
+    next_page_id: str | None = None
+
+
+class FlyerGroup(BaseModel):
+    """One product across this week's flyers, for the Flyers tab: brand/item/variant/size like a UserItem, plus
+    its cheapest listing (tapping the row opens that store's page at that listing's tile)."""
+
+    brand: str | None = None
+    item: str
+    variant: str | None = None
+    size_qty: float | None = None
+    size_unit: str | None = None
+    cheapest: FlyerListing
+    store_count: int
+    saves_vs_next: float | None = None  # how much less cheapest is than the next store's price
+    category: str | None = None
+
+
+class FlyerBrowsePage(BaseModel):
+    items: list[FlyerGroup]
+    page: int
+    page_size: int
+    total: int
+    stores: list[str]  # every store with a current listing, for the filter chips
+    categories: list[str] = []  # categories among the listings (busiest first), for the filter chips
+    ready: bool = True  # false while the first download for this postal code is still running
+
+
+class AskRequest(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+
+    question: str = Field(min_length=2, max_length=300)
+    conversation_id: str | None = None  # from the previous answer, to follow up
+
+
+class AskResponse(BaseModel):
+    """Genie's answer: its words, and the table behind them."""
+
+    conversation_id: str
+    answer: str | None = None
+    description: str | None = None  # what the query does, in a sentence
+    sql: str | None = None
+    columns: list[str] = []
+    rows: list[list[str | None]] = []
+
+
+class FlyersStatus(BaseModel):
+    postal: str
+    ready: bool  # false until the first download for this postal code has finished
+    refreshing: bool
+    listings: int
+    stores: list[str]
+    fetched_at: datetime | None = None
+    source: Literal["flipp", "databricks", "canned"]
+    error: str | None = None  # why the last refresh failed, if it did
+    ask_enabled: bool = False  # Genie is set up, so POST /ask works
 
 
 class StoreTotal(BaseModel):

@@ -8,9 +8,21 @@ Sizes may differ only by the imperial/metric rounding window in SIZE_WINDOW, exc
 """
 import re
 import unicodedata
+from datetime import date
+from functools import lru_cache
 from statistics import median
 
-from apps.api.models import Basket, Deal, ExtractedItem, FlyerItem, SplitLine, StoreTotal, UserItem
+from apps.api.models import (
+    Basket,
+    Deal,
+    ExtractedItem,
+    FlyerGroup,
+    FlyerItem,
+    FlyerListing,
+    SplitLine,
+    StoreTotal,
+    UserItem,
+)
 from shared.units import Size, normalize_unit, per_weight, size_from, unit_price
 
 # Allowed flyer size / wanted size, per base unit. Volume is asymmetric (-6 % / +10 %: a bit more is fine, noticeably
@@ -28,6 +40,7 @@ def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
     return " ".join(p for p in (x.brand, x.item, x.variant, size) if p)
 
 
+@lru_cache(maxsize=50_000)  # every list read compares each item against every flyer tile
 def _words(s: str | None) -> frozenset[str]:
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().replace("'", "")
     s = re.sub(r"\s+%", "%", s)  # "2 %" (bilingual labels) == "2%"
@@ -40,14 +53,32 @@ def size_of(x: UserItem | FlyerItem) -> Size | None:
 
 
 def missing(u: UserItem) -> list[str]:
-    """Fields the user still has to fill in before this item can match anything."""
+    """Fields the user still has to fill in before this item can match anything.
+
+    Empty for an item added from a flyer: its fields are the listing's, so a blank one means the flyer has none too.
+    The API only keeps source="flyer" on items that are a listing (is_listing); clients can't claim it.
+    """
+    if u.source == "flyer":
+        return []
     return [f for f in FIELDS if not (size_of(u) if f == "size" else _words(getattr(u, f)))]
 
 
 def same_item(u: UserItem, f: FlyerItem) -> bool:
-    if missing(u) or any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
+    return not missing(u) and _identical(u, f)
+
+
+def is_listing(x: UserItem | ExtractedItem, flyers: list[FlyerItem]) -> bool:
+    """Whether x really is a current listing. Only then may it be a source="flyer" item, which skips missing()."""
+    return any(_identical(x, f) for f in flyers)
+
+
+def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
+    if any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
         return False
-    want, have = size_of(u), size_of(f) or normalize_unit(f.raw_text or "")  # "$0.79 /lb" with no size field
+    want = size_of(u)
+    if want is None:  # only a flyer-added item gets here: its size is its listing's, and that listing has none
+        return size_of(f) is None
+    have = size_of(f) or normalize_unit(f.raw_text or "")  # "$0.79 /lb" with no size field
     if have is None or have.unit != want.unit:
         return False
     if per_weight(f.raw_text or ""):  # "$0.69/lb": 2 lb of bananas is the same listing as 1 lb
@@ -80,6 +111,8 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
             savings_vs_median=None if mid is None or f.unit_price is None else round(mid - f.unit_price, 4),
             item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
             page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
+            image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
+            flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
         ) for f in best.values()]
     return out
 
@@ -91,6 +124,164 @@ def cheapest(deals: list[Deal]) -> dict[str, Deal]:
         if d.user_item_id not in best or d.cost < best[d.user_item_id].cost:
             best[d.user_item_id] = d
     return best
+
+
+def _browse_key(f: FlyerItem) -> tuple:
+    """Groups listings of the same product across stores for the Flyers tab. Unlike same_item, this is flyer-vs-
+    flyer: no size tolerance window (two listings need the same words and the same size to be "the same row"),
+    since it's picking one browse row per product, not deciding whether a listing matches what a user typed."""
+    size = size_of(f)
+    return (_words(f.brand), _words(f.item), _words(f.variant), round(size.qty, 1) if size else None,
+            size.unit if size else None)
+
+
+_FLIPP_PAGE = re.compile(r"flipp-(\d+)-\d+")
+_FLIPP_ITEM = re.compile(r"flipp-(\d+)")
+
+
+def flyer_url(f: FlyerItem) -> str | None:
+    """The original flyer, on Flipp's website. Only listings that came from Flipp have one."""
+    m = _FLIPP_PAGE.fullmatch(f.page_id)
+    return f"https://flipp.com/en-ca/flyer/{m[1]}" if m else None
+
+
+def item_url(f: FlyerItem) -> str | None:
+    """That flyer opened at this item."""
+    m = _FLIPP_ITEM.fullmatch(f.item_id)
+    return f"https://flipp.com/en-ca/item/{m[1]}" if m else None
+
+
+def listing(f: FlyerItem) -> FlyerListing:
+    return FlyerListing(
+        label=label(f), store=f.store, price=f.price, unit_price=f.unit_price, unit=f.unit, flyer_item_id=f.item_id,
+        page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
+        image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
+        flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
+    )
+
+
+def saves_vs_next(deals: list[Deal]) -> dict[str, float]:
+    """user_item_id -> how much less its cheapest store is than the next one. Absent with one store or a tie."""
+    costs: dict[str, list[float]] = {}
+    for d in deals:
+        costs.setdefault(d.user_item_id, []).append(d.cost)
+    return {uid: round(c[1] - c[0], 2) for uid, c in ((u, sorted(v)) for u, v in costs.items())
+            if len(c) > 1 and c[1] > c[0]}
+
+
+_SIZE_WORD = re.compile(r"\d+(?:\.\d+)?(?:l|ml|g|kg|lb|lbs|oz|ea|ct|pk)?|l|ml|g|kg|lb|lbs|oz|ea|ct|pk|pack|x")
+
+
+def _query_words(q: str | None) -> frozenset[str]:
+    """What someone typed, as words, without the size ("milk 4 L" -> milk): sizes are compared separately."""
+    return frozenset(w for w in _words(q) if not _SIZE_WORD.fullmatch(w))
+
+
+def _listing_words(f: FlyerItem) -> frozenset[str]:
+    return _words(" ".join(p for p in (f.brand, f.item, f.variant, f.raw_text) if p))
+
+
+def _starts(tokens: frozenset[str], words: frozenset[str]) -> bool:
+    """Every token begins some word, so results appear while the last word is still half typed."""
+    return all(any(w.startswith(t) for w in words) for t in tokens)
+
+
+def _split_query(q: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
+    """(required, preferred): the words that must be found, and numbers like "2%" that only rank listings higher,
+    so "2% milk" still finds milk in a week with no 2%."""
+    required = frozenset(w for w in q if w.isalpha())
+    return (required, q - required) if required else (q, frozenset())
+
+
+def _head_miss(q: frozenset[str], item: str) -> bool:
+    """True when no typed word starts the item's last word. The last word is the thing itself: "Brown Eggs" is eggs,
+    "Egg Nog" is not."""
+    last = _words(item.split()[-1]) if item.split() else frozenset()
+    return not any(w.startswith(t) for t in q for w in last)
+
+
+def closest(u: UserItem, flyer_items: list[FlyerItem], n: int = 5) -> list[FlyerListing]:
+    """Listings that name what the user typed, nearest first, for items with no exact listing.
+
+    Only the item's words have to be found; a matching brand, variant and size rank a listing higher.
+    """
+    required, preferred = _split_query(_query_words(u.item))
+    if not required:
+        return []
+    brand, variant, size = _query_words(u.brand), _query_words(u.variant), size_of(u)
+    ranked = []
+    for f in flyer_items:
+        words = _listing_words(f)
+        if f.price is None or not _starts(required, words):
+            continue
+        item_words, fsize = _words(f.item), size_of(f)
+        ranked.append((
+            (not _starts(required, item_words), _head_miss(required, f.item), not required <= item_words,
+             bool(brand) and not _starts(brand, _words(f.brand)),
+             bool(preferred | variant) and not _starts(preferred | variant, words),
+             len(item_words - required - preferred), bool(size) and not (fsize and fsize.unit == size.unit), f.price),
+            f.item_id, f))
+    ranked.sort(key=lambda r: r[:2])
+    named = [r for r in ranked if not r[0][0]]  # the item's own name has the words, not just the small print
+    return [listing(f) for *_, f in (named if len(named) >= 2 else ranked)[:n]]
+
+
+def _sort_key(sort: str, q: frozenset[str]):
+    if sort == "relevance" and q:
+        # Products named by the search come first, then the ones where it is the main noun, then the plainest
+        # and most widely sold, then cheapest.
+        required, preferred = _split_query(q)
+
+        def relevance(g: FlyerGroup):
+            name = _words(" ".join(p for p in (g.brand, g.item, g.variant) if p))
+            item = _words(g.item)
+            return (not _starts(required, item), _head_miss(required, g.item), not required <= item,
+                    bool(preferred) and not _starts(preferred, name), len(item - q), -g.store_count,
+                    g.cheapest.price or 0)
+
+        return relevance
+    return {
+        "price": lambda g: g.cheapest.price or 0,
+        "ends": lambda g: g.cheapest.valid_to or date.max,
+        "az": lambda g: 0,
+    }.get(sort, lambda g: -(g.saves_vs_next or 0))
+
+
+def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str | None = None,
+                  sort: str = "savings", category: str | None = None) -> list[FlyerGroup]:
+    """Every priced listing as one row per product with its cheapest store. store limits rows to what it carries."""
+    groups: dict[tuple, list[FlyerItem]] = {}
+    for f in flyer_items:
+        if f.price is not None:
+            groups.setdefault(_browse_key(f), []).append(f)
+
+    q_words = _query_words(q)
+    if q and q.strip() and not q_words:  # only a size was typed: nothing to look for
+        return []
+    needed = _split_query(q_words)[0] if sort == "relevance" else q_words  # relevance only requires the plain words
+    out = []
+    for rows in groups.values():
+        if category and rows[0].category != category:
+            continue
+        shown = [f for f in rows if not store or f.store == store]
+        if not shown or (needed and not _starts(needed, _listing_words(rows[0]))):
+            continue
+        best = min(shown, key=lambda f: f.price)
+        others = [f.price for f in rows if f.store != best.store]
+        # Only comparable when the size is known: a sizeless "Bathroom Tissue" is a different pack at each store.
+        saves = round(min(others) - best.price, 2) if others and best.size_qty and min(others) > best.price else None
+        out.append(FlyerGroup(
+            brand=best.brand, item=best.item, variant=best.variant, size_qty=best.size_qty, size_unit=best.size_unit,
+            store_count=len({f.store for f in rows}), saves_vs_next=saves, cheapest=listing(best),
+            category=best.category,
+        ))
+    if sort == "relevance" and needed:  # "Soy Sauce, great for ramen" is not a ramen: small print only fills gaps
+        named = [g for g in out if _starts(needed, _words(g.item))]
+        out = named if len(named) >= 2 else out
+    primary = _sort_key(sort, q_words)
+    out.sort(key=lambda g: (primary(g), g.item.lower(), (g.brand or "").lower(), (g.variant or "").lower(),
+                            g.size_qty or 0))
+    return out
 
 
 def basket(user_items: list[UserItem], deals: list[Deal]) -> Basket:

@@ -64,6 +64,8 @@ opentelemetry-api==1.45.2
     # via
     #   anthropic
     #   fastapi
+pillow==13.0.0
+    # via realdeal
 protobuf==7.36.2
     # via databricks-sdk
 pyasn1==0.6.5

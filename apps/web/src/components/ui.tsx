@@ -2,7 +2,7 @@
 // TabBar, plus the sheet-era additions below (EmptyState, Chip, PrimaryButton, FieldRow, UnitPicker). Design
 // changes the look via tokens in globals.css; Frontend keeps these props stable.
 import { useId, type ReactNode } from "react";
-import { Loader } from "@/components/icons";
+import { Loader, Search } from "@/components/icons";
 
 export function LargeTitle({ title, action }: { title: string; action?: ReactNode }) {
   return (
@@ -17,7 +17,7 @@ export function InsetGroup({ header, footer, children }: { header?: string; foot
   return (
     <section className="mx-4 mb-6">
       {header && <h2 className="px-4 pb-1.5 text-[0.8125rem] uppercase text-label-2">{header}</h2>}
-      <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
+      <ul className="overflow-hidden rounded-[14px] bg-elevated">
         {children}
       </ul>
       {footer && <p className="px-4 pt-1.5 text-[0.8125rem] text-label-2">{footer}</p>}
@@ -50,7 +50,7 @@ export function Row({
       <Tag
         onClick={onClick}
         type={onClick ? "button" : undefined}
-        className={`flex min-h-tap flex-1 items-center gap-3 py-2.5 pr-4 text-left ${
+        className={`flex min-h-tap min-w-0 flex-1 items-center gap-3 py-2.5 pr-4 text-left ${
           onClick ? "transition-colors active:bg-bg" : ""
         }`}
       >
@@ -59,7 +59,7 @@ export function Row({
           <p className={`truncate ${destructive ? "text-destructive" : ""}`}>{title}</p>
           {subtitle && <p className="truncate text-[0.9375rem] text-label-2">{subtitle}</p>}
         </div>
-        {detail && <span className={accent ? "font-semibold text-tint" : "text-label-2"}>{detail}</span>}
+        {detail && <span className={`shrink-0 ${accent ? "font-semibold text-tint" : "text-label-2"}`}>{detail}</span>}
         {trailing}
       </Tag>
     </li>
@@ -159,7 +159,7 @@ export function PrimaryButton({
       type={type}
       onClick={onClick}
       disabled={disabled || loading}
-      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-white shadow-tint transition-[opacity,transform] active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-on-tint shadow-tint transition-[opacity,transform] active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
     >
       {loading && <Loader size={18} />}
       {children}
@@ -182,7 +182,7 @@ export function Chip({
       onClick={onClick}
       aria-pressed={selected}
       className={`flex h-tap shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[15px] transition-[background-color,color,transform] active:scale-95 ${
-        selected ? "bg-tint font-semibold text-white shadow-tint" : "border border-separator bg-elevated text-label"
+        selected ? "bg-tint font-semibold text-on-tint shadow-tint" : "border border-separator bg-elevated text-label"
       }`}
     >
       {label}
@@ -202,7 +202,7 @@ export function UnitPicker({ value, onChange, units = UNITS }: { value: string; 
           onClick={() => onChange(u)}
           aria-pressed={value === u}
           className={`flex h-tap flex-1 items-center justify-center rounded-[10px] text-[15px] transition-colors ${
-            value === u ? "bg-tint font-semibold text-white" : "text-label-2"
+            value === u ? "bg-tint font-semibold text-on-tint" : "text-label-2"
           }`}
         >
           {u}
@@ -248,9 +248,55 @@ export function FieldRow({
   );
 }
 
-export const money = (n?: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
+const currency = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" });
+export const money = (n?: number | null) => (n == null ? "—" : currency.format(n));
 
 /** Pulsing placeholder block for skeleton loading states. Pass sizing/shape via className. */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div aria-hidden className={`animate-pulse rounded-[8px] bg-label-2/15 motion-reduce:animate-none ${className}`} />;
+  return <div aria-hidden className={`skeleton rounded-[6px] ${className}`} />;
+}
+
+/** Layout-matched placeholder for an item row: thumbnail, two text bars, price. */
+export function SkeletonRow() {
+  return (
+    <li aria-hidden className="row-sep relative flex min-h-[3.75rem] items-center gap-3 px-3.5 py-3" style={{ "--sep": "70px" } as React.CSSProperties}>
+      <Skeleton className="size-11 shrink-0 rounded-[8px]" />
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <Skeleton className="h-3 w-3/5" />
+        <Skeleton className="h-3 w-2/5" />
+      </div>
+      <Skeleton className="h-5 w-12" />
+    </li>
+  );
+}
+
+export function ListSkeleton({ rows = 7 }: { rows?: number }) {
+  return (
+    <section className="mx-4 mb-6">
+      <p role="status" className="sr-only">
+        Loading
+      </p>
+      <ul className="overflow-hidden rounded-[14px] bg-elevated">
+        {Array.from({ length: rows }, (_, i) => (
+          <SkeletonRow key={i} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function SearchField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <label className="mx-4 mb-3 flex items-center gap-2 rounded-[10px] bg-fill px-3 py-2">
+      <Search size={17} className="shrink-0 text-label-2" />
+      <span className="sr-only">{placeholder}</span>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-[17px] outline-none placeholder:text-label-2"
+      />
+    </label>
+  );
 }

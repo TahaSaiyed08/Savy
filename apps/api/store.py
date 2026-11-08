@@ -12,7 +12,8 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
+from apps.api import flyers_live
+from apps.api.mock_data import FLYER_ITEMS, seed_items
 from apps.api.models import Extraction, FlyerItem, ItemPatch, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,9 @@ _EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
 _LIST_ITEMS = (
     "SELECT u.user_item_id, u.user_id, u.brand, u.item, u.variant, u.size_qty, u.size_unit, u.source, u.added_at, "
     "u.last_bought_at, EXISTS (SELECT 1 FROM basket_items b WHERE b.user_item_id = u.user_item_id "
-    "AND b.user_id = u.user_id) AS in_basket FROM user_items u WHERE u.user_id = :user_id ORDER BY u.added_at DESC")
+    "AND b.user_id = u.user_id) AS in_basket, EXISTS (SELECT 1 FROM basket_items b WHERE b.user_item_id = "
+    "u.user_item_id AND b.user_id = u.user_id AND b.done_at IS NOT NULL) AS done FROM user_items u "
+    "WHERE u.user_id = :user_id ORDER BY u.added_at DESC")
 _ADD_USER = ("MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
              "WHEN NOT MATCHED THEN INSERT (user_id, created_at) VALUES (s.user_id, current_timestamp())")
 # The batch travels as one JSON string parameter and is expanded with inline(from_json(...)).
@@ -43,10 +46,13 @@ _UPDATE_ITEM = (
     "UPDATE user_items SET brand = IF(:set_brand, :brand, brand), item = IF(:set_item, :item, item), "
     "variant = IF(:set_variant, :variant, variant), size_qty = IF(:set_size_qty, CAST(:size_qty AS DOUBLE), size_qty), "
     "size_unit = IF(:set_size_unit, :size_unit, size_unit) WHERE user_id = :user_id AND user_item_id = :user_item_id")
+_SET_SOURCE = "UPDATE user_items SET source = :source WHERE user_id = :user_id AND user_item_id = :user_item_id"
 _ADD_TO_BASKET = (
-    "INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp() WHERE EXISTS (SELECT 1 FROM "
+    "INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp(), NULL WHERE EXISTS (SELECT 1 FROM "
     "user_items WHERE user_id = :user_id AND user_item_id = :user_item_id) AND NOT EXISTS (SELECT 1 FROM "
     "basket_items WHERE user_id = :user_id AND user_item_id = :user_item_id)")
+_SET_DONE = ("UPDATE basket_items SET done_at = IF(:done, current_timestamp(), NULL) "
+             "WHERE user_id = :user_id AND user_item_id = :user_item_id")
 _REMOVE_FROM_BASKET = "DELETE FROM basket_items WHERE user_id = :user_id AND user_item_id = :user_item_id"
 _DELETE_ITEM = "DELETE FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id"
 
@@ -61,9 +67,14 @@ def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **f
 _items: dict[UUID, list[UserItem]] = {}
 
 
-def _mock_items(user_id: UUID) -> list[UserItem]:
+def _mock_items(user_id: UUID, postal: str | None = None) -> list[UserItem]:
     if user_id not in _items:
-        _items[user_id] = [_new_item(user_id, "manual", **s) for s in SEED_ITEMS]
+        try:
+            seeds = seed_items(flyer_items(postal))
+        except Exception:  # flyers being down must not fail the list
+            log.warning("flyers unavailable; starting an empty pantry", exc_info=True)
+            seeds = []
+        _items[user_id] = [_new_item(user_id, **{"source": "manual", **s}) for s in seeds]
     return _items[user_id]
 
 
@@ -74,14 +85,16 @@ _flyer_cache: tuple[float, list[FlyerItem]] = (float("-inf"), [])  # -inf: monot
 _flyer_lock = threading.Lock()
 
 
-def flyer_items() -> list[FlyerItem]:
-    """Every priced listing still valid today, across all stores. Mock mode returns FLYER_ITEMS as is.
+def flyer_items(postal: str | None = None) -> list[FlyerItem]:
+    """Every priced listing still valid today, across all stores.
 
+    Mock mode serves this week's real Flipp flyers near `postal` (default: DEFAULT_POSTAL_CODE), or the canned
+    FLYER_ITEMS when live flyers are off. Databricks mode reads the table, which has no postal code.
     Raises only if the very first load fails; after that a failed refresh keeps the previous copy (logged).
     """
     global _flyer_cache
     if MOCK:
-        return FLYER_ITEMS
+        return flyers_live.items(postal or flyers_live.DEFAULT_POSTAL) if flyers_live.ENABLED else FLYER_ITEMS
     from apps.api import databricks_sql as db
 
     with _flyer_lock:  # one warehouse query per TTL, not one per concurrent request
@@ -113,7 +126,18 @@ def flyer_items() -> list[FlyerItem]:
 
 
 def page_tiles(page_id: str) -> list[FlyerItem]:
+    if MOCK and flyers_live.ENABLED:
+        return flyers_live.page(page_id)  # page ids are globally unique, so no postal code is needed
     return [f for f in flyer_items() if f.page_id == page_id]
+
+
+def flyer_pages(tile: FlyerItem) -> list[str]:
+    """page_ids of the flyer a tile is on, in page order."""
+    if MOCK and flyers_live.ENABLED:
+        return flyers_live.sibling_pages(tile)
+    pages = {f.page_id: f.page_no or 0 for f in flyer_items()
+             if f.store == tile.store and f.week_start == tile.week_start}
+    return sorted(pages, key=lambda p: pages[p])
 
 
 def page_image(path: str) -> bytes | None:
@@ -132,24 +156,25 @@ def page_image(path: str) -> bytes | None:
 # --- interface used by main.py ---------------------------------------------
 
 
-def list_items(user_id: UUID, fresh: bool = False) -> list[UserItem]:
+def list_items(user_id: UUID, fresh: bool = False, postal: str | None = None) -> list[UserItem]:
     """fresh=True right after a write: never served from the last-good cache."""
     if MOCK:
-        return _mock_items(user_id)
+        return _mock_items(user_id, postal)
     from apps.api import databricks_sql as db
 
     rows = db.query(_LIST_ITEMS, fallback=not fresh, user_id=str(user_id))
     return [UserItem(**r) for r in rows]
 
 
-def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
+def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[UserItem]:
     new = [_new_item(user_id, req.source, req.bought_at, **i.model_dump(include=set(_EDITABLE))) for i in req.items]
     if MOCK:
-        _mock_items(user_id)[:0] = new
+        _mock_items(user_id, postal)[:0] = new
         return new
     from apps.api import databricks_sql as db
 
-    rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket"}), "user_id": str(u.user_id)} for u in new])
+    rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket", "done"}), "user_id": str(u.user_id)}
+                       for u in new])
     with ThreadPoolExecutor(max_workers=2) as pool:  # fixed statement count however many items
         writes = [pool.submit(db.execute, _ADD_USER, user_id=str(user_id)),
                   pool.submit(db.execute, _ADD_ITEMS, rows=rows)]
@@ -158,15 +183,16 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
     return new
 
 
-def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch) -> UserItem | None:
+def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch, postal: str | None = None) -> UserItem | None:
     """Edit fields and/or move to or from the basket. None if the user has no such item."""
     fields = {k: getattr(patch, k) for k in patch.model_fields_set if k in _EDITABLE}
     if MOCK:
-        items = _mock_items(user_id)
+        items = _mock_items(user_id, postal)
         for n, i in enumerate(items):
             if i.user_item_id == user_item_id:
                 in_basket = i.in_basket if patch.in_basket is None else patch.in_basket
-                items[n] = i.model_copy(update={**fields, "in_basket": in_basket})
+                done = in_basket and (i.done if patch.done is None else patch.done)
+                items[n] = i.model_copy(update={**fields, "in_basket": in_basket, "done": done})
                 return items[n]
         return None
     from apps.api import databricks_sql as db
@@ -179,6 +205,22 @@ def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch) -> UserItem 
         db.execute(_ADD_TO_BASKET, **ids)
     elif patch.in_basket is False:
         db.execute(_REMOVE_FROM_BASKET, **ids)
+    if patch.done is not None:
+        db.execute(_SET_DONE, done=patch.done, **ids)
+    return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
+
+
+def set_source(user_id: UUID, user_item_id: str, source: str, postal: str | None = None) -> UserItem | None:
+    if MOCK:
+        items = _mock_items(user_id, postal)
+        for n, i in enumerate(items):
+            if i.user_item_id == user_item_id:
+                items[n] = i.model_copy(update={"source": source})
+                return items[n]
+        return None
+    from apps.api import databricks_sql as db
+
+    db.execute(_SET_SOURCE, source=source, user_id=str(user_id), user_item_id=user_item_id)
     return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
 
 

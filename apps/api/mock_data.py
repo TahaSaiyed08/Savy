@@ -1,19 +1,14 @@
 """This week's fake flyers. Shapes match realdeal.core.flyer_items so mock and real modes are interchangeable.
 
-FLYER_ITEMS loads apps/api/data/flipp_snapshot.json if it exists (made by `make flipp-snapshot`) and falls back to
-this canned list otherwise.
+These canned flyers are what the API serves when live flyers are off (REALDEAL_LIVE_FLYERS=0: tests and CI);
+otherwise apps/api/flyers_live.py supplies this week's real ones from Flipp.
 """
-import json
-import logging
+import re
 from datetime import date, timedelta
-from pathlib import Path
 
 from apps.api.models import FlyerItem
 from shared.stores import STORES as _NAMES
 from shared.units import normalize_unit, unit_price
-
-log = logging.getLogger(__name__)
-_SNAPSHOT = Path(__file__).parent / "data" / "flipp_snapshot.json"
 
 WEEK = date(2026, 11, 5)
 STORES = list(_NAMES.values())
@@ -64,17 +59,7 @@ def _items() -> list[FlyerItem]:
     return out
 
 
-def _load_flyer_items() -> list[FlyerItem]:
-    if _SNAPSHOT.exists():
-        try:
-            data = json.loads(_SNAPSHOT.read_text())
-            return [FlyerItem(**row) for row in data["rows"]]
-        except Exception:
-            log.warning("couldn't load %s; falling back to canned flyer data", _SNAPSHOT, exc_info=True)
-    return _items()
-
-
-FLYER_ITEMS = _load_flyer_items()
+FLYER_ITEMS = _items()
 
 # Every new device starts with these, pre-moved into the Basket, so Pantry and Basket are never empty in a demo.
 SEED_ITEMS = [
@@ -84,3 +69,35 @@ SEED_ITEMS = [
     dict(brand="PC", item="chicken thigh", variant="boneless skinless", size_qty=1, size_unit="kg", in_basket=True),
     dict(item="ramen", in_basket=True),  # incomplete: matches nothing until brand, variant and size are filled in
 ]
+
+
+_STAPLES = re.compile(r"\b(milk|eggs?|chicken|yogurt|bread|coffee|rice|cheese|butter)\b", re.I)
+
+
+def _staple_seeds(flyers: list[FlyerItem]) -> list[dict]:
+    """Staples from real listings, preferring ones several stores carry, so a new device's Pantry opens on real
+    prices with a real "less than next store" gap."""
+    stores: dict[tuple, set[str]] = {}
+    for f in flyers:
+        stores.setdefault((f.brand, f.item, f.variant, f.size_qty, f.size_unit), set()).add(f.store)
+    seeds, seen = [], set()
+    ranked = sorted((k for k in stores if k[0] and k[3] and _STAPLES.search(k[1])),
+                    key=lambda k: (-len(stores[k]), k[1]))
+    for brand, item, variant, qty, unit in ranked:
+        staple = _STAPLES.search(item).group(1).lower().rstrip("s")
+        if staple in seen:
+            continue
+        seen.add(staple)
+        seeds.append(dict(source="flyer", brand=brand, item=item, variant=variant, size_qty=qty, size_unit=unit,
+                          in_basket=len(seeds) < 3))
+        if len(seeds) == 5:
+            break
+    return seeds + [dict(item="ramen", in_basket=True)]  # typed: shows the closest-match path
+
+
+def seed_items(flyers: list[FlyerItem]) -> list[dict]:
+    """What a new device starts with: the canned set for canned flyers, staples for live ones, nothing yet when the
+    first fetch for its postal code hasn't landed."""
+    if not flyers:
+        return []
+    return SEED_ITEMS if flyers[0].item_id.startswith("mock-") else _staple_seeds(flyers)

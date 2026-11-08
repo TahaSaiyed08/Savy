@@ -73,6 +73,31 @@ def test_flyer_page_has_the_listing_tile_and_dates():
     assert c.get(f"/flyer-pages/{milk['page_id']}/image").status_code == 404  # mock pages are tiles only
 
 
+def test_flyer_browse_groups_by_product_and_picks_cheapest_store():
+    page = c.get("/flyer-items", params={"page_size": 100}).json()
+    milk = next(g for g in page["items"] if g["item"] == "milk" and g["variant"] == "2%" and g["size_qty"] == 4000)
+    assert milk["cheapest"]["store"] == "Safeway" and milk["store_count"] == 2  # Save-On-Foods and Safeway
+    lucerne = next(g for g in page["items"] if g["brand"] == "Lucerne")
+    assert lucerne["store_count"] == 1  # same item/variant/size as Dairyland's, but a different brand
+    bananas = next(g for g in page["items"] if g["item"] == "banana" and g["variant"] == "organic")
+    assert (bananas["cheapest"]["store"], bananas["store_count"]) == ("T&T", 2)  # Safeway $0.99, T&T $0.89
+    assert page["total"] == len(page["items"])  # one page covers every mock row
+
+
+def test_flyer_browse_search_is_whole_word():
+    hits = c.get("/flyer-items", params={"q": "2%", "page_size": 100}).json()["items"]
+    assert hits and all(g["variant"] == "2%" for g in hits)
+    assert c.get("/flyer-items", params={"q": "nonexistent brand"}).json()["items"] == []
+
+
+def test_flyer_browse_paginates():
+    everything = c.get("/flyer-items", params={"page_size": 100}).json()["items"]
+    first = c.get("/flyer-items", params={"page_size": 2, "page": 1}).json()
+    second = c.get("/flyer-items", params={"page_size": 2, "page": 2}).json()
+    assert len(first["items"]) == 2 and first["total"] == len(everything)
+    assert first["items"] + second["items"] == everything[:4]
+
+
 def test_volume_page_image_is_served(monkeypatch):
     from apps.api import store
 
@@ -279,7 +304,7 @@ def test_flyer_refresh_failure_keeps_the_old_copy_and_skips_bad_rows(monkeypatch
 def test_flyers_down_never_fails_items_or_a_saved_write(monkeypatch):
     from apps.api import store
 
-    def down():
+    def down(*_):
         raise RuntimeError("warehouse down")
 
     monkeypatch.setattr(store, "flyer_items", down)
@@ -700,3 +725,128 @@ def test_ipv6_clients_share_a_slash_64():
     a, b = main._client_key("2001:db8:1:2::1"), main._client_key("2001:db8:1:2:ffff::9")
     assert a == b != main._client_key("2001:db8:1:3::1")
     assert main._client_key("10.0.0.7") == "10.0.0.7"
+
+
+def test_item_added_from_a_flyer_matches_with_blank_fields_a_typed_item_would_not():
+    fields = dict(brand=None, item="celery", variant=None, size_qty=None, size_unit=None)
+    celery = _flyer(**fields)
+    assert logic.same_item(_user(source="flyer", **fields), celery)
+    assert not logic.same_item(_user(**fields), celery)  # typed: still has to be fully filled in
+    assert logic.missing(_user(source="flyer", **fields)) == []
+    assert not logic.same_item(_user(source="flyer", **{**fields, "item": "carrot"}), celery)
+
+
+def test_saves_vs_next_is_the_gap_to_the_second_cheapest_store():
+    deals = logic.deals_for([_want()], FLYER_ITEMS)  # Safeway $5.99, Save-On $6.49, Superstore $7.19 scaled
+    assert logic.saves_vs_next(deals) == {"u1": 0.5}
+    assert logic.saves_vs_next(deals[:1]) == {}
+
+
+def test_closest_finds_listings_naming_the_item_nearest_first():
+    near = logic.closest(_user(brand="Lucerne", item="milk"), FLYER_ITEMS)
+    assert len(near) == 5 and near[0].store == "Safeway" and near[0].label.startswith("Lucerne")
+    assert logic.closest(_user(item="unobtainium"), FLYER_ITEMS) == []
+
+
+def test_typed_item_without_exact_listing_gets_closest_instead_of_nothing():
+    h2 = {"X-User-Id": str(uuid.uuid4())}
+    ramen = next(i for i in c.get("/items", headers=h2).json() if i["item"] == "ramen")
+    assert ramen["cheapest"] is None and ramen["closest"] == []  # nothing on sale names ramen
+    typed = c.post("/items", headers=h2, json={"items": [{"item": "milk", "confidence": 1}], "source": "manual"}).json()
+    assert typed[0]["cheapest"] is None and len(typed[0]["closest"]) == 5
+
+
+def test_done_stays_in_basket_and_clears_when_it_leaves():
+    h2 = {"X-User-Id": str(uuid.uuid4())}
+    item = c.get("/items", headers=h2).json()[0]
+    url = f"/items/{item['user_item_id']}"
+    r = c.patch(url, headers=h2, json={"done": True}).json()
+    assert r["done"] and r["in_basket"]
+    r = c.patch(url, headers=h2, json={"in_basket": False}).json()
+    assert not r["done"] and not r["in_basket"]
+
+
+def test_flyer_browse_filters_by_store_and_sorts():
+    r = c.get("/flyer-items", params={"store": "T&T", "page_size": 100}).json()
+    assert r["items"] and all(g["cheapest"]["store"] == "T&T" for g in r["items"]) and "Safeway" in r["stores"]
+    by_price = c.get("/flyer-items", params={"sort": "price", "page_size": 100}).json()["items"]
+    prices = [g["cheapest"]["price"] for g in by_price]
+    assert prices == sorted(prices)
+    assert c.get("/flyer-items", params={"sort": "nope"}).status_code == 422
+    assert c.get("/flyer-items", params={"q": "ban"}).json()["items"]  # a half-typed word already finds bananas
+
+
+def test_flyer_page_links_to_its_neighbours(monkeypatch):
+    from apps.api import flyers_live
+
+    first = logic.FlyerItem(item_id="a", page_id="flipp-7-1", store="S", week_start="2026-11-05", item="x", page_no=1,
+                            valid_to="2999-01-01")
+    second = first.model_copy(update={"item_id": "b", "page_id": "flipp-7-2", "page_no": 2})
+    monkeypatch.setattr(flyers_live, "ENABLED", True)
+    monkeypatch.setattr(flyers_live, "_feeds", {})
+    flyers_live.put("T0T0T0", [second, first])
+    p = c.get("/flyer-pages/flipp-7-2").json()
+    assert (p["page_count"], p["prev_page_id"], p["next_page_id"]) == (2, "flipp-7-1", None)
+
+
+def test_flyer_added_item_matches_its_own_listing_even_when_the_name_prints_a_size_it_did_not_keep():
+    # "PC MILK OR DARK CHOCOLATE COVERED ALMONDS, 70 G" once parsed to item "Milk" with no size field, while its
+    # raw text still said 70 g, so the item added from that listing could not find the listing it came from.
+    fields = dict(brand="PC", item="Milk", variant=None, size_qty=None, size_unit=None)
+    listing = _flyer(**fields, raw_text="PC MILK OR DARK CHOCOLATE COVERED ALMONDS, 70 G")
+    assert logic.same_item(_user(source="flyer", **fields), listing)
+
+
+def test_small_print_matches_only_fill_gaps_when_the_names_have_the_word():
+    ramen = [_flyer(item_id=f"r{n}", item="Cup Ramen", brand=f"B{n}", variant=None, size_qty=None, size_unit=None)
+             for n in range(2)]
+    sauce = _flyer(item_id="s", item="Soy Sauce", brand="Kikkoman", variant=None, size_qty=None, size_unit=None,
+                   raw_text="Kikkoman Soy Sauce, great for ramen")
+    typed = _user(item="ramen")
+    assert [x.flyer_item_id for x in logic.closest(typed, ramen + [sauce])] == ["r0", "r1"]  # two named: sauce dropped
+    assert [x.flyer_item_id for x in logic.closest(typed, ramen[:1] + [sauce])] == ["r0", "s"]  # one: sauce fills in
+    assert [g.item for g in logic.browse_flyers(ramen + [sauce], "ramen", sort="relevance")] == ["Cup Ramen"] * 2
+
+
+def test_listings_link_to_the_original_flyer_on_flipp_only_when_they_came_from_there():
+    live = _flyer(item_id="flipp-1052141198", page_id="flipp-8214584-3", store_url="https://www.nofrills.ca/p/9")
+    got = logic.listing(live)
+    assert got.flyer_url == "https://flipp.com/en-ca/flyer/8214584"
+    assert got.item_url == "https://flipp.com/en-ca/item/1052141198" and got.store_url == "https://www.nofrills.ca/p/9"
+    canned = logic.listing(FLYER_ITEMS[0])
+    assert (canned.flyer_url, canned.item_url, canned.store_url) == (None, None, None)
+    deal = logic.deals_for([_want()], [_flyer(item_id="flipp-7", page_id="flipp-70-1")])[0]
+    assert (deal.flyer_url, deal.item_url) == ("https://flipp.com/en-ca/flyer/70", "https://flipp.com/en-ca/item/7")
+
+
+def test_client_cannot_claim_flyer_source_for_something_no_flyer_lists():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    body = {"source": "flyer", "items": [{"item": "milk", "confidence": 1}]}
+    (saved,) = c.post("/items", headers=h, json=body).json()
+    assert saved["source"] == "manual" and saved["missing"] == ["brand", "variant", "size"] and not saved["cheapest"]
+
+
+def test_real_flyer_item_keeps_its_source_until_edited_away_from_the_listing():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    listing = {"brand": "Bertolli", "item": "olive oil", "variant": "extra virgin", "size_qty": 1000, "size_unit": "ml"}
+    (saved,) = c.post("/items", headers=h, json={"source": "flyer", "items": [{**listing, "confidence": 1}]}).json()
+    assert saved["source"] == "flyer" and saved["cheapest"]["store"] == "Safeway"
+
+    url = f"/items/{saved['user_item_id']}"
+    assert c.patch(url, headers=h, json=listing).json()["source"] == "flyer"  # re-saved unchanged
+    assert c.patch(url, headers=h, json={"in_basket": True}).json()["source"] == "flyer"  # not an identity edit
+
+    edited = c.patch(url, headers=h, json={"brand": None, "variant": None, "size_qty": None, "size_unit": None}).json()
+    assert edited["source"] == "manual" and edited["missing"] == ["brand", "variant", "size"] and not edited["cheapest"]
+
+
+def test_flyers_down_means_a_flyer_claim_is_not_trusted(monkeypatch):
+    from apps.api import store
+
+    def down(postal=None):
+        raise RuntimeError("warehouse down")
+
+    monkeypatch.setattr(store, "flyer_items", down)
+    h = {"X-User-Id": str(uuid.uuid4())}
+    r = c.post("/items", headers=h, json={"source": "flyer", "items": [{"item": "milk", "confidence": 1}]})
+    assert r.status_code == 200 and r.json()[0]["source"] == "manual"
