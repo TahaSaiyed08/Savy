@@ -269,6 +269,8 @@ def refresh(postal: str, force: bool = False) -> None:
 
     The saved copy, its time and Databricks are only touched when something actually changed: a new flyer, a store
     whose flyer ended, or names the refiner has just labelled. An hourly check that finds nothing does nothing."""
+    # The refresh in four moves: (1) ask Flipp which flyers are current, (2) re-download only the stores whose flyer
+    # changed, (3) save and publish if anything changed, (4) hand names to the AI refiner and Databricks.
     f = feed(postal)
     with _lock:
         if f.refreshing:
@@ -278,10 +280,12 @@ def refresh(postal: str, force: bool = False) -> None:
     try:
         listed = flipp.grocery_flyers_for(postal)
         age = datetime.now(UTC) - f.fetched_at if f.fetched_at else None
+        # Re-download everything once a day (prices get corrected in place), or on demand; otherwise only what changed.
         everything = force or age is None or age > STALE_AFTER
         old = {s: [r for r in f.rows if r.store == s] for s in f.flyers}
         rows, flyers, meta, downloaded = [], {}, {}, False
         for store, flyer in listed.items():
+            # Unchanged store: reuse its rows as they are (the cheap path that runs every hour).
             if not everything and f.flyers.get(store) == flyer["id"] and old.get(store) and flyer["id"] in f.meta:
                 rows += old[store]
                 flyers[store] = flyer["id"]
@@ -290,6 +294,7 @@ def refresh(postal: str, force: bool = False) -> None:
             try:
                 fetched = flipp.fetch_flyer(flyer, store)
             except Exception:
+                # One store failing must not lose the others, or its own old rows: keep them and carry on.
                 log.warning("couldn't fetch %s near %s; keeping what we had", store, postal, exc_info=True)
                 if old.get(store):
                     rows += old[store]
@@ -310,11 +315,12 @@ def refresh(postal: str, force: bool = False) -> None:
             _save(f)
             _prune_pages()
             log.info("flyers near %s: %d listings from %s", postal, len(rows), ", ".join(flyers))
+        # Publishing before the AI step matters: people see new flyers immediately, and the slower naming follows.
         f.error = None
         labelled = _label(f)
         if changed or labelled:
             _sync(postal, f.rows, f.fetched_at)
-    except Exception as e:
+    except Exception as e:  # never raise out of a background thread: record why, keep serving the previous copy
         f.error = str(e) or type(e).__name__
         if f.fetched_at is None:
             f.fetched_at = datetime.now(UTC)  # nothing to show, but don't retry on every request; the next check will
@@ -327,6 +333,7 @@ def _label(f: Feed) -> bool:
     """Have the AI refiner name any listings it hasn't yet. True when it labelled some, which are then saved."""
     if not refine.enabled() or not any(r.category is None for r in f.rows):
         return False
+    # Only rows without a category are sent, and answers are cached on disk, so this is cheap after the first run.
     refined = refine.apply(f.rows)
     if all(a.category == b.category for a, b in zip(refined, f.rows, strict=True)):
         return False  # the model had nothing for them (down, or out of quota): they are asked again next time
@@ -340,6 +347,7 @@ def _sync(postal: str, rows: list[FlyerItem], fetched_at: datetime | None) -> No
     if not databricks_sync.enabled() or fetched_at is None:
         return
 
+    # Runs on its own thread: the warehouse can take a minute to wake, and a refresh shouldn't wait for it.
     def push() -> None:
         try:
             databricks_sync.push(postal, rows, fetched_at)
@@ -361,6 +369,7 @@ async def keep_fresh() -> None:
     """Runs for the life of the API: warm the default postal code at boot, then look for new flyers hourly."""
     if not ENABLED:
         return
+    # to_thread keeps the blocking disk and network work off the event loop that serves requests.
     await asyncio.to_thread(items, DEFAULT_POSTAL)  # reads the saved copy (or starts the first fetch)
     while True:
         await asyncio.to_thread(tick)  # a copy saved before the API stopped may be a week behind
