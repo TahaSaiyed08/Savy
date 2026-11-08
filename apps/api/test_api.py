@@ -1,5 +1,6 @@
 import io
 import uuid
+from datetime import date
 from types import SimpleNamespace
 
 import anthropic
@@ -55,6 +56,8 @@ def test_edit_and_move_to_basket():
     basket = c.get("/basket", headers=h).json()
     assert "Nissin instant noodle spicy 500 g" in [s["item_label"] for s in basket["split"]]
     assert c.patch(url, headers=h, json={"item": ""}).status_code == 422
+    assert c.patch(url, headers=h, json={"item": None}).status_code == 422
+    assert c.patch(url, headers=h, json={"item": "   "}).status_code == 422
     assert c.patch("/items/nope", headers=h, json={"in_basket": True}).status_code == 404
     other = {"X-User-Id": str(uuid.uuid4())}
     assert c.patch(url, headers=other, json={"in_basket": False}).status_code == 404
@@ -80,6 +83,8 @@ def test_volume_page_image_is_served(monkeypatch):
     assert c.get("/flyer-pages/p9").json()["image_url"] == "/flyer-pages/p9/image"
     r = c.get("/flyer-pages/p9/image")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff")
+    monkeypatch.setattr(store, "page_image", lambda path: None)  # in flyer_items but gone from the Volume
+    assert c.get("/flyer-pages/p9/image").status_code == 404
 
 
 def test_delete_item_removes_it():
@@ -139,7 +144,9 @@ def test_basket_only_includes_items_moved_into_it():
     c.post(f"/items/{target}/basket", headers=h, json={"in_basket": False})
 
     after = c.get("/basket", headers=h).json()
-    assert after["split_total"] <= before["split_total"]  # one fewer item to price in
+    gone = [line for line in before["split"] if line["user_item_id"] == target]
+    assert all(line["user_item_id"] != target for line in after["split"])
+    assert after["split_total"] == round(before["split_total"] - sum(line["cost"] for line in gone), 2)
 
 
 def test_edit_item_changes_its_fields():
@@ -219,23 +226,67 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
 
 
 def test_flyer_items_are_read_once_per_ttl(monkeypatch):
-    from datetime import date
-
     from apps.api import databricks_sql, store
 
     reads = []
     row = {"item_id": "f1", "page_id": "p1", "store": "Safeway", "week_start": "2026-11-05", "item": "milk",
            "price": "5.99", "bbox": "[0.1,0.2,0.3,0.4]", "page_no": "3", "valid_to": "2026-11-11"}
     monkeypatch.setattr(store, "MOCK", False)
-    monkeypatch.setattr(store, "_flyer_cache", (0.0, []))
+    monkeypatch.setattr(store, "_flyer_cache", (float("-inf"), []))
     expired = {**row, "item_id": "old", "valid_to": "2026-10-01"}
     old_schema = {k: v for k, v in row.items() if k not in ("page_no", "valid_to")} | {"item_id": "f0"}
-    monkeypatch.setattr(databricks_sql, "query", lambda sql, **p: reads.append(sql) or [row, expired, old_schema])
+    monkeypatch.setattr(databricks_sql, "query",
+                        lambda sql, fallback=True, **p: reads.append(sql) or [row, expired, old_schema])
     monkeypatch.setattr(store, "date", SimpleNamespace(today=lambda: date(2026, 11, 7)))
     first, second = store.flyer_items(), store.flyer_items()
     assert len(reads) == 1 and first is second
     assert first[0].bbox == [0.1, 0.2, 0.3, 0.4] and first[0].page_no == 3  # SQL API strings parsed
     assert [f.item_id for f in first] == ["f1", "f0"]  # expired dropped; no valid_to means week_start + 6
+
+
+def test_flyer_refresh_failure_keeps_the_old_copy_and_skips_bad_rows(monkeypatch):
+    from apps.api import databricks_sql, store
+
+    clock = [1000.0]
+    good = {"item_id": "f1", "page_id": "p1", "store": "Safeway", "week_start": "2026-11-05", "item": "milk",
+            "price": "5.99", "valid_to": "2026-11-07"}  # valid through today: kept
+    bad = {**good, "item_id": "f2", "bbox": "[0.1, 0.2]"}  # not 4 numbers
+    replies = [[good, bad], RuntimeError("warehouse down"), [good]]
+
+    def query(sql, fallback=True, **p):
+        assert fallback is False  # staleness is handled here, not by the generic last-good cache
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_flyer_cache", (float("-inf"), []))
+    monkeypatch.setattr(store.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(store, "date", SimpleNamespace(today=lambda: date(2026, 11, 7)))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    assert [f.item_id for f in store.flyer_items()] == ["f1"]  # bad row skipped, not fatal
+    clock[0] += store.FLYER_TTL + 1
+    assert [f.item_id for f in store.flyer_items()] == ["f1"]  # refresh failed: old copy served
+    clock[0] += store.FLYER_RETRY - 1
+    store.flyer_items()
+    assert len(replies) == 1  # not retried before FLYER_RETRY
+    clock[0] += 2
+    store.flyer_items()
+    assert replies == []  # retried once the retry window passed
+
+
+def test_flyers_down_never_fails_items_or_a_saved_write(monkeypatch):
+    from apps.api import store
+
+    def down():
+        raise RuntimeError("warehouse down")
+
+    monkeypatch.setattr(store, "flyer_items", down)
+    h = {"X-User-Id": str(uuid.uuid4())}
+    r = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}], "source": "manual"})
+    assert r.status_code == 200 and r.json()[0]["cheapest"] is None
+    assert c.get("/items", headers=h).status_code == 200
 
 
 def test_patch_and_basket_statements(monkeypatch):
@@ -244,10 +295,14 @@ def test_patch_and_basket_statements(monkeypatch):
 
     writes = []
     monkeypatch.setattr(store, "MOCK", False)
-    monkeypatch.setattr(store, "list_items", lambda uid: [])
+    reads = []
+    monkeypatch.setattr(store, "list_items", lambda uid, fresh=False: reads.append(fresh) or [])
     monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
     uid = uuid.uuid4()
     store.update_item(uid, "u1", ItemPatch(brand=None, size_qty=2, in_basket=True))
+    assert reads == [True]  # the read-back after a write never comes from the last-good cache
+    for sql, p in writes:  # every write is scoped to the caller, including the basket insert's EXISTS guard
+        assert sql.count("user_id = :user_id") >= 1 and p["user_id"] == str(uid) and p["user_item_id"] == "u1"
     (update, up), (insert, _) = writes
     assert update.startswith("UPDATE user_items SET") and up["brand"] is None and up["size_qty"] == 2
     assert "variant" not in up  # fields not sent are left alone
@@ -255,6 +310,10 @@ def test_patch_and_basket_statements(monkeypatch):
     writes.clear()
     store.update_item(uid, "u1", ItemPatch(in_basket=False))
     assert len(writes) == 1 and writes[0][0].startswith("DELETE FROM basket_items")
+    writes.clear()
+    store.delete_item(uid, "u1")
+    assert [s.split()[2] for s, _ in writes] == ["basket_items", "user_items"]
+    assert all("user_id = :user_id" in s and p["user_id"] == str(uid) for s, p in writes)
 
 
 def test_receipt_photo_and_row_are_saved(monkeypatch):
@@ -304,7 +363,7 @@ def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
     up["ok"] = False
     assert databricks_sql.query("SELECT 1") == [{"n": 1}]  # screens still get the last good result
     with pytest.raises(RuntimeError):
-        databricks_sql.query("SELECT 1", fresh=True)
+        databricks_sql.query("SELECT 1", fallback=False)
 
 
 def test_unknown_extractor_is_rejected(monkeypatch):
@@ -463,6 +522,40 @@ def test_counts_are_exact_and_per_lb_ignores_quantity():
     assert not logic.same_item(bananas, _flyer(**per_lb, raw_text="Dole organic bananas 1 lb bag"))
     no_size = {**per_lb, "size_qty": None, "size_unit": None}
     assert logic.same_item(bananas, _flyer(**no_size, raw_text="DOLE ORGANIC BANANAS $0.89 /lb"))
+
+
+def test_spaced_percent_matches():
+    assert logic.same_item(_want(variant="2 %"), _flyer(variant="2%"))
+    assert not logic.same_item(_want(variant="2 %"), _flyer(variant="1%"))
+
+
+@pytest.mark.parametrize("want_g, have_g, matches", [
+    (500, 454, True), (454, 500, True), (1000, 907, True), (907, 1000, True), (1000, 850, False), (500, 560, False),
+])
+def test_mass_window_both_ways(want_g, have_g, matches):
+    u, f = _want(size_qty=want_g, size_unit="g"), _flyer(size_qty=have_g, size_unit="g")
+    assert logic.same_item(u, f) is matches
+
+
+def test_fixed_pack_priced_per_kg_still_needs_the_size():
+    steak = dict(brand="PC", item="steak", variant="striploin", size_qty=1000, size_unit="g", price=13.21,
+                 unit_price=1.321, unit="100g", raw_text="PC striploin steak 1 kg $13.21/kg")
+    assert not logic.same_item(_want(brand="PC", item="steak", variant="striploin", size_qty=3, size_unit="kg"),
+                               _flyer(**steak))
+    assert logic.same_item(_want(brand="PC", item="steak", variant="striploin", size_qty=1, size_unit="kg"),
+                           _flyer(**steak))
+
+
+def test_per_lb_cost_scales_to_the_wanted_weight():
+    bananas = _user(brand="Dole", item="banana", variant="organic", size_qty=2, size_unit="lb")
+    costs = {d.store: d.cost for d in logic.deals_for([bananas], FLYER_ITEMS)}
+    assert costs == {"Safeway": 1.98, "T&T": 1.78}  # 2 lb at $0.99/lb and $0.89/lb; Superstore's has no variant
+
+
+def test_counted_sizes_parse_like_the_pipeline():
+    from shared.units import Size, size_from
+    assert size_from(12.0, "ea") == Size(12.0, "ea") and size_from(4.0, "l") == Size(4000.0, "ml")
+    assert size_from(None, "l") is None and size_from(2, "dozen") is None
 
 
 def test_cheapest_is_by_cost_for_the_users_size():

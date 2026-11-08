@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
 from apps.api.models import Extraction, FlyerItem, ItemPatch, SaveItems, UserItem
 
@@ -18,6 +20,8 @@ MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") 
 UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
 _MINE = "WHERE user_id = :user_id AND user_item_id = :user_item_id"  # every per-item write is scoped to its owner
+_ITEM_COLS = ("user_item_id", "user_id", "brand", "item", "variant", "size_qty", "size_unit", "source", "added_at",
+              "last_bought_at")
 _EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
 # Batches travel as one JSON string parameter and are expanded with inline(from_json(...)) in SQL.
 _ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
@@ -42,26 +46,46 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
 
 # --- flyers (both modes) ----------------------------------------------------
 FLYER_TTL = 600.0  # flyers change weekly; every list read matches against this in-process copy
-_flyer_cache: tuple[float, list[FlyerItem]] = (0.0, [])
+FLYER_RETRY = 60.0  # after a failed refresh, keep serving the old copy and try again this soon
+_flyer_cache: tuple[float, list[FlyerItem]] = (float("-inf"), [])  # -inf: monotonic() can be < TTL after boot
 _flyer_lock = threading.Lock()
 
 
 def flyer_items() -> list[FlyerItem]:
-    """Every listing still valid today, across all stores."""
+    """Every priced listing still valid today, across all stores. Mock mode returns FLYER_ITEMS as is.
+
+    Raises only if the very first load fails; after that a failed refresh keeps the previous copy (logged).
+    """
     global _flyer_cache
     if MOCK:
         return FLYER_ITEMS
     from apps.api import databricks_sql as db
 
     with _flyer_lock:  # one warehouse query per TTL, not one per concurrent request
-        if time.monotonic() - _flyer_cache[0] > FLYER_TTL:
+        loaded, items = _flyer_cache
+        if time.monotonic() - loaded <= FLYER_TTL:
+            return items
+        try:
             # Validity is checked here, not in SQL, so this also reads flyer_items built before valid_to existed.
             rows = db.query("SELECT * FROM flyer_items WHERE price IS NOT NULL "
-                            "AND week_start >= date_sub(current_date(), 30)")
-            today = date.today()
-            items = [FlyerItem(**r) for r in rows]
-            _flyer_cache = (time.monotonic(),
-                            [f for f in items if (f.valid_to or f.week_start + timedelta(days=6)) >= today])
+                            "AND week_start >= date_sub(current_date(), 30)", fallback=False)
+        except Exception:
+            if not items:
+                raise
+            log.warning("flyer refresh failed; serving the copy from %.0f s ago", time.monotonic() - loaded,
+                        exc_info=True)
+            _flyer_cache = (time.monotonic() - FLYER_TTL + FLYER_RETRY, items)
+            return items
+        today, fresh, bad = date.today(), [], 0
+        for r in rows:
+            try:
+                fresh.append(FlyerItem(**r))
+            except ValidationError:
+                bad += 1
+        if bad:
+            log.warning("skipped %d of %d flyer_items rows that don't fit FlyerItem", bad, len(rows))
+        _flyer_cache = (time.monotonic(),
+                        [f for f in fresh if (f.valid_to or f.week_start + timedelta(days=6)) >= today])
         return _flyer_cache[1]
 
 
@@ -69,23 +93,33 @@ def page_tiles(page_id: str) -> list[FlyerItem]:
     return [f for f in flyer_items() if f.page_id == page_id]
 
 
-def page_image(path: str) -> bytes:
+def page_image(path: str) -> bytes | None:
+    """The page image from the Volume, or None if it isn't there (anymore)."""
+    from databricks.sdk.errors import NotFound
+
     from apps.api import databricks_sql as db
 
-    return db._client().files.download(path).contents.read()
+    try:
+        return db._client().files.download(path).contents.read()
+    except NotFound:
+        log.warning("page image %s is in flyer_items but not in the Volume", path)
+        return None
 
 
 # --- interface used by main.py ---------------------------------------------
 
 
-def list_items(user_id: UUID) -> list[UserItem]:
+def list_items(user_id: UUID, fresh: bool = False) -> list[UserItem]:
+    """fresh=True right after a write: never served from the last-good cache."""
     if MOCK:
         return _mock_items(user_id)
     from apps.api import databricks_sql as db
 
-    rows = db.query("SELECT u.*, b.user_item_id IS NOT NULL AS in_basket FROM user_items u "
-                    "LEFT JOIN basket_items b ON b.user_item_id = u.user_item_id AND b.user_id = u.user_id "
-                    "WHERE u.user_id = :user_id ORDER BY u.added_at DESC", user_id=str(user_id))
+    # EXISTS, not a join: two racing "Move to Basket" taps can leave duplicate basket rows.
+    # Named columns, not u.*: catalogs that ran PR #10's ALTER also have an in_basket column on user_items.
+    rows = db.query(f"SELECT {', '.join('u.' + c for c in _ITEM_COLS)}, EXISTS (SELECT 1 FROM basket_items b WHERE "
+                    "b.user_item_id = u.user_item_id AND b.user_id = u.user_id) AS in_basket FROM user_items u "
+                    "WHERE u.user_id = :user_id ORDER BY u.added_at DESC", fallback=not fresh, user_id=str(user_id))
     return [UserItem(**r) for r in rows]
 
 
@@ -136,7 +170,7 @@ def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch) -> UserItem 
                    f"AND NOT EXISTS (SELECT 1 FROM basket_items {mine})", **ids)
     elif patch.in_basket is False:
         db.execute(f"DELETE FROM basket_items {mine}", **ids)
-    return next((i for i in list_items(user_id) if i.user_item_id == user_item_id), None)
+    return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
 
 
 def delete_item(user_id: UUID, user_item_id: str) -> None:

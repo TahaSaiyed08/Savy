@@ -10,7 +10,7 @@ thing behind a frozen interface, so nobody blocks anybody.
 
 | Between          | Interface                                                                      | Lives in                                                                                      | Guarded by                                                |
 | ---------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, pipeline table definitions                                          | `apps/api/models.py` mirrors every column                 |
+| 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, pipeline table definitions                                          | `apps/api/models.py` mirrors the columns the API reads     |
 | 2 ↔ 3            | OpenAPI schema                                                                 | `apps/api/models.py` + `main.py` → `apps/web/openapi.json` → `apps/web/src/lib/api-schema.ts` | CI `make check-api` fails if the client is stale          |
 | 3 ↔ 4            | Component list: `LargeTitle`, `InsetGroup`, `Row`, `Status`, `TabBar` + tokens | `apps/web/src/components/ui.tsx`, `TabBar.tsx`, `src/app/globals.css`                         | Design changes tokens and Figma; Frontend keeps the props |
 | 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts                                             | `shared/prompts/*.md` (active versions in `shared/__init__.py`), `shared/units.py`            | `databricks/test_prompt_sync.py`, `shared/test_units.py`  |
@@ -51,7 +51,7 @@ the `ExtractedItem` fields; `normalize_unit`'s return type.
 7. Build the 20-page golden set; measure field accuracy. **13:00 go/no-go:** ≥ 85 %, else drop to the two cleanest stores.
 8. Matching is exact (`logic.same_item`: brand, item, variant and size, size within `SIZE_WINDOW`), so there is no
    threshold or AI Search index. Check 20 known user-item ↔ flyer-item pairs match, and that near-misses don't.
-10. Add `normalize_unit` cases for any flyer text that parses wrong (add to `shared/test_units.py` first).
+9. Add `normalize_unit` cases for any flyer text that parses wrong (add to `shared/test_units.py` first).
 
 **Done when:** `SELECT count(*) FROM realdeal.core.flyer_items` > 2,000 real rows from this week's flyers, and
 the 20 known pairs match exactly.

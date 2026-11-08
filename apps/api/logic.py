@@ -11,11 +11,12 @@ import unicodedata
 from statistics import median
 
 from apps.api.models import Basket, Deal, ExtractedItem, FlyerItem, SplitLine, StoreTotal, UserItem
-from shared.units import Size, normalize_unit, per_weight, unit_price
+from shared.units import Size, normalize_unit, per_weight, size_from, unit_price
 
-# Allowed flyer size / wanted size, per base unit. Asymmetric: a bit more is fine, noticeably less is not.
+# Allowed flyer size / wanted size, per base unit. Volume is asymmetric (-6 % / +10 %: a bit more is fine, noticeably
+# less is not); mass allows about 10 % either way.
 #   volume: 946 mL ~ 1 L, 1.89 L ~ 2 L, 3.78 L ~ 4 L (either way), but 750 mL != 1 L
-#   mass:   454 g (1 lb) ~ 500 g (either way), 907 g (2 lb) ~ 1 kg
+#   mass:   454 g (1 lb) ~ 500 g, 907 g (2 lb) ~ 1 kg (either way)
 #   count:  exact (a dozen is a dozen)
 SIZE_WINDOW = {"ml": (0.94, 1.10), "g": (0.90, 1.11), "ea": (1.0, 1.0)}
 FIELDS = ("brand", "item", "variant", "size")
@@ -29,15 +30,13 @@ def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
 
 def _words(s: str | None) -> frozenset[str]:
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().replace("'", "")
+    s = re.sub(r"\s+%", "%", s)  # "2 %" (bilingual labels) == "2%"
     return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
                      for w in _WORD.findall(s))
 
 
 def size_of(x: UserItem | FlyerItem) -> Size | None:
-    if not x.size_qty or not x.size_unit:
-        return None
-    s = Size(x.size_qty, "ea") if x.size_unit.lower() == "ea" else normalize_unit(f"{x.size_qty:g} {x.size_unit}")
-    return s if s and s.qty > 0 else None
+    return size_from(x.size_qty, x.size_unit)
 
 
 def missing(u: UserItem) -> list[str]:

@@ -154,7 +154,14 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
 
 
 def _listed(items: list[UserItem]) -> list[ListItem]:
-    best = logic.cheapest(logic.deals_for(items, store.flyer_items()))
+    """Adds each item's cheapest listing. Flyers being down must not fail the list or a write that already landed
+    (the client would retry a saved POST and duplicate it), so the items come back with cheapest=None instead."""
+    try:
+        flyers = store.flyer_items()
+    except Exception:
+        log.warning("flyers unavailable; returning %d items without deals", len(items), exc_info=True)
+        flyers = []
+    best = logic.cheapest(logic.deals_for(items, flyers))
     return [ListItem(**i.model_dump(), cheapest=best.get(i.user_item_id), missing=logic.missing(i)) for i in items]
 
 
@@ -172,10 +179,8 @@ def save_items(user_id: UserId, body: SaveItems) -> list[ListItem]:
 
 @app.patch("/items/{user_item_id}")
 def update_item(user_id: UserId, user_item_id: str, body: ItemPatch) -> ListItem:
-    """Edit an item (send brand/item/variant/size; extra ExtractedItem fields are ignored), or move it to/from the
-    Basket with in_basket. Only the fields sent are changed."""
-    if "item" in body.model_fields_set and not body.item:
-        raise HTTPException(422, "item can't be empty")
+    """Edit an item (brand/item/variant/size_qty/size_unit; unknown fields such as price are ignored), or move it to
+    or from the Basket with in_basket. Only the fields sent are changed."""
     item = store.update_item(user_id, user_item_id, body)
     if item is None:
         raise HTTPException(404, "no such item")
@@ -184,7 +189,7 @@ def update_item(user_id: UserId, user_item_id: str, body: ItemPatch) -> ListItem
 
 @app.post("/items/{user_item_id}/basket")
 def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket) -> ListItem:
-    """Moves a Pantry item into (or out of) the Basket. Same as PATCH with only in_basket."""
+    """Moves a My List item into (or out of) the Basket. Same as PATCH with only in_basket."""
     return update_item(user_id, user_item_id, ItemPatch(in_basket=body.in_basket))
 
 
@@ -217,7 +222,7 @@ def get_page(page_id: str) -> PageView:
         page_id=page_id, store=f.store, page_no=f.page_no, valid_from=f.valid_from, valid_to=f.valid_to,
         image_url=f"/flyer-pages/{page_id}/image" if f.image_path else None, aspect=f.page_aspect,
         tiles=[Tile(item_id=t.item_id, bbox=t.bbox, image_url=t.image_url, label=t.raw_text or logic.label(t),
-                    price=t.price) for t in tiles if t.bbox and len(t.bbox) == 4],
+                    price=t.price) for t in tiles if t.bbox],
     )
 
 
@@ -228,5 +233,8 @@ def get_page_image(page_id: str) -> Response:
     path = next((t.image_path for t in store.page_tiles(page_id) if t.image_path), None)
     if not path:
         raise HTTPException(404, "no page image")
+    image = store.page_image(path)
+    if image is None:
+        raise HTTPException(404, "page image missing from the Volume")
     media = "image/png" if path.lower().endswith(".png") else "image/jpeg"
-    return Response(store.page_image(path), media_type=media, headers={"Cache-Control": "public, max-age=604800"})
+    return Response(image, media_type=media, headers={"Cache-Control": "public, max-age=604800"})
