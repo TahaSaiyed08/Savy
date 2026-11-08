@@ -42,11 +42,12 @@ def _item(i: int, store, brand, item, variant, size_text, price) -> FlyerItem:
 
 FLYER_ITEMS = [_item(i, *row) for i, row in enumerate(_ROWS)]
 
-# Every new device starts with these so the Deals and Basket tabs are never empty in a demo.
+# Every new device starts with these, pre-moved into the Basket, so Pantry/Add item(s)/Basket are never
+# empty in a demo.
 SEED_ITEMS = [
-    dict(item="milk", variant="2%", size_qty=4, size_unit="l"),
-    dict(item="eggs", variant="large", size_qty=12, size_unit="ea"),
-    dict(item="banana", size_qty=2, size_unit="lb"),
-    dict(brand="PC", item="chicken thigh", variant="boneless", size_qty=1, size_unit="kg"),
-    dict(item="ramen", size_qty=None, size_unit=None),  # no deal this week
+    dict(item="milk", variant="2%", size_qty=4, size_unit="l", in_basket=True),
+    dict(item="eggs", variant="large", size_qty=12, size_unit="ea", in_basket=True),
+    dict(item="banana", size_qty=2, size_unit="lb", in_basket=True),
+    dict(brand="PC", item="chicken thigh", variant="boneless", size_qty=1, size_unit="kg", in_basket=True),
+    dict(item="ramen", size_qty=None, size_unit=None, in_basket=True),  # no deal this week
 ]
