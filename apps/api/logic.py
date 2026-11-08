@@ -95,6 +95,8 @@ def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
 
 
 def cost(listing: FlyerItem | Deal, user: UserItem) -> float:
+    # Compare listings by what the person would actually pay for their amount: a bigger pack with a lower unit price
+    # can win even when its sticker price is higher.
     """What the user's size costs at this listing: unit price scaled to the user's size when known, else shelf price."""
     up = unit_price(1.0, size_of(user))  # (100 / qty) or (1 / count), so cost = unit_price / up[0]
     if listing.unit_price is not None and up and listing.unit == up[1]:
@@ -106,10 +108,12 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
     """Cheapest exact listing per (user item, store), with savings vs the cross-store median unit price."""
     out: list[Deal] = []
     for u in user_items:
+        # One deal per store: if a store lists the item twice (two pages), keep its cheaper listing.
         best: dict[str, FlyerItem] = {}
         for f in flyer_items:
             if f.price is not None and same_item(u, f) and (f.store not in best or cost(f, u) < cost(best[f.store], u)):
                 best[f.store] = f
+        # "Savings vs median" is how far under the typical store this one is, so it needs unit prices to compare.
         prices = [f.unit_price for f in best.values() if f.unit_price is not None]
         mid = median(prices) if prices else None
         out += [Deal(
@@ -125,6 +129,7 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
 
 
 def cheapest(deals: list[Deal]) -> dict[str, Deal]:
+    # Ties keep whichever deal came first, so the result is stable between requests.
     """user_item_id -> its cheapest listing across all stores (what tapping the item opens)."""
     best: dict[str, Deal] = {}
     for d in deals:
@@ -152,6 +157,7 @@ def listing(f: FlyerItem) -> FlyerListing:
 
 
 def saves_vs_next(deals: list[Deal]) -> dict[str, float]:
+    # The "$X less than the next store" badge: the gap between the cheapest and second-cheapest store.
     """user_item_id -> how much less its cheapest store is than the next one. Absent with one store or a tie."""
     costs: dict[str, list[float]] = {}
     for d in deals:
@@ -276,6 +282,8 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
 
 
 def basket(user_items: list[UserItem], deals: list[Deal]) -> Basket:
+    # Prices the whole list two ways: all at one store (a store missing items ranks below one that has them all), or
+    # split so each item is bought at its cheapest store. `delta` is what splitting saves over the best single store.
     by_item = {u.user_item_id: u for u in user_items}
     stores = sorted({d.store for d in deals if d.user_item_id in by_item})
     per_store: dict[str, dict[str, float]] = {s: {} for s in stores}
