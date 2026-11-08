@@ -81,19 +81,26 @@ def test_save_survives_matching_failure(monkeypatch):
     from apps.api import databricks_sql, store
     from apps.api.models import SaveItems
 
-    writes = []
+    writes, search_calls, fallback_calls = [], [], []
 
-    def down(*a, **kw):
-        raise RuntimeError("index and flyer_items unavailable")
+    def search_down():
+        search_calls.append(1)
+        raise RuntimeError("AI Search index unavailable")
+
+    def fallback_down(sql, **p):
+        fallback_calls.append(sql)
+        raise RuntimeError("flyer_items unavailable")
 
     monkeypatch.setattr(store, "MOCK", False)
     monkeypatch.setattr(store, "_unmatched", {})
     monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(sql))
-    monkeypatch.setattr(databricks_sql, "query", down)
-    monkeypatch.setattr(databricks_sql, "_client", down)
+    monkeypatch.setattr(databricks_sql, "query", fallback_down)
+    monkeypatch.setattr(databricks_sql, "_client", search_down)
     uid = uuid.uuid4()
     saved = store.add_items(uid, SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
     assert len(saved) == 1 and any("INSERT INTO user_items" in s for s in writes)
+    assert search_calls, "matching never tried AI Search"
+    assert fallback_calls, "matching never tried the LIKE fallback"
     assert store._unmatched[uid][1] == saved  # queued for retry
 
 
