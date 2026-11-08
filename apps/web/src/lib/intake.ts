@@ -23,12 +23,14 @@ export function intakeErrorMessage(response?: Response, source?: "voice"): strin
 }
 
 const TIMEOUT_MS = 30_000;
+/** A receipt is a whole page read by a model: usually 10 to 20 s, longer when the model is busy and a fallback steps in. */
+export const RECEIPT_TIMEOUT_MS = 120_000;
 
 /** One per intake call. `cancel()` is for the user (Cancel button); the 30s timer fires on its own. */
-export function intakeController() {
+export function intakeController(timeoutMs = TIMEOUT_MS) {
   const controller = new AbortController();
   let userCancelled = false;
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   return {
     signal: controller.signal,
     cancel: () => {

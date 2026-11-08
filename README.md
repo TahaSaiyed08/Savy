@@ -245,7 +245,7 @@ The browser tests run with `npm --prefix apps/web run test:e2e`.
 | `GENIE_SPACE_ID` | API | read from `apps/api/data/genie_space.json` (`make databricks-setup` writes it) |
 
 Overrides: `REALDEAL_MOCK=0|1`, `REALDEAL_LIVE_FLYERS=0` (canned flyers only: tests and CI), `EXTRACTOR=mock|claude|gemini|databricks`,
-`ANTHROPIC_MODEL`, `GEMINI_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
+`ANTHROPIC_MODEL`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
 `ELEVENLABS_STT_MODEL`, `INTAKE_LIMIT_PER_HOUR`, `INTAKE_GLOBAL_LIMIT_PER_HOUR`, `ASK_LIMIT_PER_HOUR`, `API_URL` (web to API proxy target).
 `EXTRACTOR=databricks` extracts with `ai_query` on the SQL warehouse; it's opt-in because on the demo receipt it took ~25 s
 against Claude's ~12 s and misread some abbreviated lines with high confidence.
