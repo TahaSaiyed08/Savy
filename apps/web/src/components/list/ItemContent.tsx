@@ -35,7 +35,13 @@ export function ItemContent({ item, struck, inBasketMark }: { item: Schemas["Lis
   const meta = itemMeta(item);
   return (
     <>
-      <Thumb src={item.cheapest?.image_url ?? item.closest?.[0]?.image_url} source={item.source} />
+      <Thumb
+        src={item.cheapest?.image_url ?? item.closest?.[0]?.image_url}
+        source={item.source}
+        href={item.cheapest ? (item.cheapest.item_url ?? item.cheapest.flyer_url) : undefined}
+        store={item.cheapest?.store}
+        item={item.item}
+      />
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5">
           <span className={`truncate ${struck ? "text-label-2 line-through" : ""}`}>{item.item}</span>
