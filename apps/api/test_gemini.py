@@ -25,11 +25,15 @@ def gemini(monkeypatch):
     """A GeminiExtractor whose calls are recorded and answered from `answers` (one per call, in order)."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
     sent, answers = [], []
 
     def post(url, headers=None, json=None, timeout=None):
-        sent.append({"url": url, "headers": headers, "body": json})
-        return answers.pop(0) if len(answers) > 1 else answers[0]
+        sent.append({"url": url, "headers": headers, "body": json, "timeout": timeout})
+        answer = answers.pop(0) if len(answers) > 1 else answers[0]
+        if isinstance(answer, Exception):
+            raise answer  # a stall: the call times out instead of answering
+        return answer
 
     monkeypatch.setattr(extractors.httpx, "post", post)
     monkeypatch.setattr(extractors.time, "sleep", lambda s: None)
@@ -66,10 +70,44 @@ def test_an_unsupported_image_is_a_415_before_any_call_is_made(gemini):
     assert e.value.status_code == 415 and gemini.sent == []
 
 
-def test_a_busy_gemini_is_retried_once_then_answers(gemini):
-    gemini.answers += [_reply("", 503), _reply(ITEMS)]
+def _model(call):
+    return call["url"].split("/models/")[1].split(":")[0]
+
+
+def test_a_busy_gemini_is_retried_on_the_lighter_model_then_answers(gemini):
+    gemini.answers += [_reply("", 429), _reply(ITEMS)]
     assert gemini.extract("manual", text="milk").items[0].item == "milk"
-    assert len(gemini.sent) == 2
+    assert [_model(c) for c in gemini.sent] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+
+def test_a_stalled_main_model_is_given_up_on_quickly_and_the_fallback_answers(gemini):
+    gemini.answers += [httpx.ReadTimeout("stalled"), _reply(ITEMS)]
+    assert gemini.extract("manual", text="milk").items[0].item == "milk"
+    first, second = gemini.sent
+    assert (_model(first), first["timeout"]) == ("gemini-3.5-flash", GeminiExtractor.TIMEOUT)
+    assert (_model(second), second["timeout"]) == ("gemini-3.1-flash-lite", GeminiExtractor.FALLBACK_TIMEOUT)
+
+
+def test_it_gives_up_after_three_attempts_and_reports_the_last_status(gemini):
+    gemini.answers.append(_reply("", 429))
+    with pytest.raises(ExtractionServiceError, match="429"):
+        gemini.extract("manual", text="milk")
+    assert len(gemini.sent) == GeminiExtractor.ATTEMPTS == 3
+
+
+def test_with_no_fallback_the_main_model_is_simply_tried_again(gemini, monkeypatch):
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "")
+    ext = GeminiExtractor()
+    gemini.answers += [_reply("", 503), _reply(ITEMS)]
+    ext.extract("manual", text="milk")
+    assert [_model(c) for c in gemini.sent] == ["gemini-3.5-flash", "gemini-3.5-flash"]
+
+
+def test_a_bad_request_or_key_is_not_retried(gemini):
+    gemini.answers.append(_reply("", 400))
+    with pytest.raises(ExtractionServiceError, match="400"):
+        gemini.extract("manual", text="milk")
+    assert len(gemini.sent) == 1
 
 
 def test_an_http_error_is_a_service_error_that_never_leaks_the_key(gemini):
@@ -111,6 +149,10 @@ def test_setup_mistakes_fail_at_startup(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setenv("GEMINI_MODEL", "x/../../y")  # the name goes into the URL
     with pytest.raises(ValueError, match="GEMINI_MODEL"):
+        GeminiExtractor()
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "../evil")
+    with pytest.raises(ValueError, match="GEMINI_FALLBACK_MODEL"):
         GeminiExtractor()
 
 

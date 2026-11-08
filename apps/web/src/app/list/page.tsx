@@ -13,7 +13,7 @@ import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/Price
 import { useToast } from "@/components/Toast";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { downscaleImage } from "@/lib/downscale";
-import { intakeController, intakeErrorMessage } from "@/lib/intake";
+import { RECEIPT_TIMEOUT_MS, intakeController, intakeErrorMessage } from "@/lib/intake";
 import { useItems } from "@/lib/use-items";
 
 type Flow =
@@ -98,7 +98,7 @@ export default function Pantry() {
     const previewUrl = URL.createObjectURL(small);
     previewUrlRef.current = previewUrl;
     setFlow({ step: "receipt-loading", previewUrl });
-    const ctl = intakeController();
+    const ctl = intakeController(RECEIPT_TIMEOUT_MS);
     controllerRef.current = ctl;
     const form = new FormData();
     form.set("file", small, small.name);

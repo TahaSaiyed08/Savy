@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Every grocery flyer near you, matched to what you actually buy, with the cheapest store for the whole basket.</b><br />
-  A mobile-first PWA built at HackCamp 2026 on <b>Databricks</b>, with <b>Gemini</b> and <b>ElevenLabs</b> in the intake, a <b>Figma</b>-first design, and <b>Freebuff</b> in our toolbox.
+  A mobile-first PWA built at HackCamp 2026 on <b>Databricks</b>, with <b>Gemini</b> and <b>ElevenLabs</b> in the intake, and a <b>Figma</b>-first design.
 </p>
 
 <p align="center">
@@ -66,7 +66,6 @@ Real screenshots of the app running against this week's real flyers near V6T 1Z4
 | **Best Design** | Designed in Figma first (18 screens), built to match, with light and dark themes, large tap targets and screen-reader support. | [Figma and design](#figma-designed-first-then-built) |
 | **Best Use of Gemini API** | Gemini reads receipts, product photos and typed lines into items, as a drop-in extractor beside Claude and `ai_query`. | [Gemini](#gemini-a-second-pair-of-eyes-for-receipts) |
 | **Community Impact** | Students on a food budget compare 30 to 40 pages of flyers by hand every week; Savy does it for them, free and with no account. | [Community impact](#community-impact) |
-| **Best Project Built with Freebuff** | Freebuff is one of the coding agents we built it with. | [Freebuff](#freebuff-our-coding-agent) |
 
 The Overall Winner and nwChoice awards need no opt-in.
 
@@ -148,16 +147,6 @@ The app started as a Figma file: mobile frames for every tab, sheet and state, i
 - **Calm motion.** The loading shimmer stops when the phone asks for reduced motion.
 - **Phone-aware layout.** Safe-area insets keep controls clear of notches and the home bar.
 - **Every state is reviewable.** `/dev/states` lays out each screen and state in one place (dev builds only).
-
-<p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
-
-### Freebuff: our coding agent
-
-<p align="center">
-  <img src="docs/assets/freebuff.svg" width="100%" alt="A terminal where a coding agent reads the repo, plans the change, edits the files and runs the tests" />
-</p>
-
-We used Freebuff as one of the coding agents we built Savy with at HackCamp, alongside Claude Code. <!-- Judges need specifics: add which parts Freebuff built or reviewed, and what it saved us. -->
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
@@ -256,7 +245,7 @@ The browser tests run with `npm --prefix apps/web run test:e2e`.
 | `GENIE_SPACE_ID` | API | read from `apps/api/data/genie_space.json` (`make databricks-setup` writes it) |
 
 Overrides: `REALDEAL_MOCK=0|1`, `REALDEAL_LIVE_FLYERS=0` (canned flyers only: tests and CI), `EXTRACTOR=mock|claude|gemini|databricks`,
-`ANTHROPIC_MODEL`, `GEMINI_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
+`ANTHROPIC_MODEL`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
 `ELEVENLABS_STT_MODEL`, `INTAKE_LIMIT_PER_HOUR`, `INTAKE_GLOBAL_LIMIT_PER_HOUR`, `ASK_LIMIT_PER_HOUR`, `API_URL` (web to API proxy target).
 `EXTRACTOR=databricks` extracts with `ai_query` on the SQL warehouse; it's opt-in because on the demo receipt it took ~25 s
 against Claude's ~12 s and misread some abbreviated lines with high confidence.
