@@ -395,7 +395,7 @@ Volume for all five original stores, with each item's exact tile box, page, pric
 
 - **Three tabs** (Pantry, Basket, Flyers) with swipe actions, undo, skeleton loading, and a light/dark theme toggle.
 - **Intake** from a bottom sheet: receipt photo, product photo, typed text and hold-to-talk voice. Low-confidence rows (`confidence < 0.6`) are flagged for edit
-  before `POST /items`; a product photo shows a chip picker over the extractor's candidates.
+  before `POST /items`; a product photo shows a chip picker over the extractor's candidates. A receipt scan also shows, under each line, the cheapest similar item on sale now, and drops the size and quantity from fresh produce (a receipt records what was weighed, not a pack size), while packaged food keeps its size.
 - **Matching** that is exact on brand, item, variant and size, with a "closest matches" list when there is no exact one.
 - **Price Match** with the real flyer page, page navigation, pinch-to-zoom, and a link to the store's own page.
 - **Location**: any Canadian postal code, remembered on the device.
