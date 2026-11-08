@@ -179,8 +179,6 @@ def apply(rows: list[FlyerItem]) -> list[FlyerItem]:
             answers = _call([todo[k] for k in ks])
             # An answer that doesn't fit the name (a bare brand like "Smart" the model can only guess at) is
             # remembered as {} so it is not asked again every refresh; a failed call (None) is retried later.
-            # An answer that doesn't fit the name (a bare brand like "Smart" the model can only guess at) is
-            # remembered as {} so it is not asked again every refresh; a failed call (None) is retried later.
             got = {k: (a if _believable(a["item"], todo[k]["name"], todo[k]["brand"]) else {})
                    for k, a in zip(ks, answers, strict=True) if a}
             if got:
