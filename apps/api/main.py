@@ -3,16 +3,25 @@ import ipaddress
 import os
 import time
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
+import anthropic
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
-from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, SaveItems, UserItem
+from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, Mode, SaveItems, UserItem
 
-app = FastAPI(title="Real Deal API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    yield
+
+
+app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
 MAX_UPLOAD = 10 * 1024 * 1024
 CONFIRM_BELOW = 0.6
 
@@ -72,6 +81,19 @@ def _read(upload: UploadFile, kind: str) -> bytes:
     return data
 
 
+def _extract(ext: Extractor, mode: Mode, **kw) -> Extraction:
+    """Turns extractor failures into client-facing errors instead of a bare 500."""
+    try:
+        return ext.extract(mode, **kw)
+    except anthropic.APIError as e:  # status errors and connection/timeouts alike
+        raise HTTPException(502, f"Extraction service error: {e.message}") from e
+    except NotImplementedError:
+        raise
+    except RuntimeError as e:  # refusal or unparseable output
+        what = "this image; try a clearer photo" if kw.get("image") else "that; try rephrasing"
+        raise HTTPException(422, f"Couldn't read {what}") from e
+
+
 def _respond(x: Extraction, transcript: str | None = None) -> IntakeResponse:
     return IntakeResponse(extraction=x, transcript=transcript,
                           needs_confirm=any(i.confidence < CONFIRM_BELOW for i in x.items))
@@ -79,28 +101,28 @@ def _respond(x: Extraction, transcript: str | None = None) -> IntakeResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "mock": store.MOCK}
+    return {"ok": True, "mock": store.MOCK, "extractor": type(get_extractor()).__name__}
 
 
 @app.post("/intake/receipt", dependencies=[Depends(rate_limit)])
 def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
-    return _respond(ext.extract("receipt", image=_read(file, "image/"), media_type=file.content_type))
+    return _respond(_extract(ext, "receipt", image=_read(file, "image/"), media_type=file.content_type))
 
 
 @app.post("/intake/photo", dependencies=[Depends(rate_limit)])
 def intake_photo(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
-    return _respond(ext.extract("product", image=_read(file, "image/"), media_type=file.content_type))
+    return _respond(_extract(ext, "product", image=_read(file, "image/"), media_type=file.content_type))
 
 
 @app.post("/intake/manual", dependencies=[Depends(rate_limit)])
 def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeResponse:
-    return _respond(ext.extract("manual", text=body.text))
+    return _respond(_extract(ext, "manual", text=body.text))
 
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     text = stt.transcribe(_read(file, "audio/"), file.filename or "audio.webm", file.content_type)
-    return _respond(ext.extract("manual", text=text), transcript=text)
+    return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
 @app.get("/items")

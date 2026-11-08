@@ -17,3 +17,6 @@ node_modules/
 
 # Local flyer downloads (large; uploaded to the UC Volume, never committed)
 flyer-shots/
+
+# Real receipt photos for testing the extractor (personal data, never committed)
+receipt-shots/

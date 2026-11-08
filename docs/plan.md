@@ -13,7 +13,7 @@ thing behind a frozen interface, so nobody blocks anybody.
 | 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, `views.sql`, pipeline table definitions                             | `apps/api/models.py` mirrors every column                 |
 | 2 ↔ 3            | OpenAPI schema                                                                 | `apps/api/models.py` + `main.py` → `apps/web/openapi.json` → `apps/web/src/lib/api-schema.ts` | CI `make check-api` fails if the client is stale          |
 | 3 ↔ 4            | Component list: `LargeTitle`, `InsetGroup`, `Row`, `Status`, `TabBar` + tokens | `apps/web/src/components/ui.tsx`, `TabBar.tsx`, `src/app/globals.css`                         | Design changes tokens and Figma; Frontend keeps the props |
-| 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts                                             | `shared/prompts/*.v1.md`, `shared/units.py`                                                   | `databricks/test_prompt_sync.py`, `shared/test_units.py`  |
+| 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts                                             | `shared/prompts/*.md` (active versions in `shared/__init__.py`), `shared/units.py`            | `databricks/test_prompt_sync.py`, `shared/test_units.py`  |
 
 Changing a frozen interface: add, don't rename or remove. If you must break it, post in the team chat first, then
 change both sides in one PR.
@@ -57,14 +57,14 @@ the `ExtractedItem` fields; `normalize_unit`'s return type.
 
 ## Workstream 2: Backend
 
-Owner: _unclaimed_
+Owner: primenumberhater666
 
 **Must not break:** the OpenAPI schema (paths, request and response models in `apps/api/models.py`); the
 `X-User-Id` contract; mock mode, which stays the default with no `.env`, so WS3 and WS4 can always run the app.
 
 1. Run `make dev`; read `/docs` at http://localhost:8000/docs. All routes already return mock data.
 2. Set `ANTHROPIC_API_KEY`; test `ClaudeExtractor` on a real receipt (`/intake/receipt`). Tune
-   `shared/prompts/receipt.v1.md` (copy to `v2`, bump `PROMPT_VERSION`) until the demo receipt parses cleanly.
+   `shared/prompts/receipt.v1.md` (copy to `v2`, add it to `PROMPT_VERSIONS` in `shared/__init__.py`) until the demo receipt parses cleanly.
 3. Once WS1 has tables, set the Databricks env vars and `REALDEAL_MOCK=0`. Exercise `store.py`'s real paths:
    `list_items`, `add_items` (insert + AI Search match + `LIKE` fallback), `list_deals`.
 4. Write receipts to `receipts` and the image to `/Volumes/realdeal/core/uploads/` on `/intake/receipt`.

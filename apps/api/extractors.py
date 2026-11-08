@@ -3,6 +3,8 @@ import base64
 import os
 from typing import Protocol
 
+from fastapi import HTTPException
+
 from apps.api.models import ExtractedItem, Extraction, Mode
 from shared import load_prompt
 from shared.units import normalize_unit
@@ -14,18 +16,35 @@ class Extractor(Protocol):
     ) -> Extraction: ...
 
 
+_MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
+
+
+def sniff_media_type(image: bytes) -> str | None:
+    """Real type from magic bytes (JPEG/PNG/GIF/WebP), otherwise None. Uploads are often mislabeled."""
+    if image[:4] == b"RIFF" and image[8:12] == b"WEBP":
+        return "image/webp"
+    return next((t for magic, t in _MAGIC if image.startswith(magic)), None)
+
+
 class ClaudeExtractor:
     """Anthropic API. The fallback if ai_query is unavailable on the workspace (11:00 go/no-go)."""
 
     def __init__(self) -> None:
         import anthropic
 
+        # The SDK only complains about a missing key on the first request; fail at startup instead.
+        if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+            raise RuntimeError("EXTRACTOR=claude needs ANTHROPIC_API_KEY")
         self.client = anthropic.Anthropic()
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
         content: list[dict] = []
         if image:
+            media_type = sniff_media_type(image)
+            if media_type is None:
+                raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
+                                         "(iPhone: Settings > Camera > Formats > Most Compatible)")
             data = base64.standard_b64encode(image).decode()
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
@@ -79,6 +98,11 @@ class MockExtractor:
         ])
 
 
+_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor}
+
+
 def get_extractor() -> Extractor:
     choice = os.getenv("EXTRACTOR") or ("claude" if os.getenv("ANTHROPIC_API_KEY") else "mock")
-    return {"claude": ClaudeExtractor, "databricks": DatabricksAIExtractor, "mock": MockExtractor}[choice]()
+    if choice not in _EXTRACTORS:
+        raise ValueError(f"EXTRACTOR={choice!r} is not one of: {', '.join(_EXTRACTORS)}")
+    return _EXTRACTORS[choice]()

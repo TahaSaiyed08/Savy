@@ -8,7 +8,7 @@ receipts), with the cheapest store for the whole basket. Mobile-first PWA, HackC
 
 ## Setup (every teammate)
 
-Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, [make](https://gnuwin32.sourceforge.net/packages/make.htm), git.
+Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, make (macOS/Linux; Windows uses dev.cmd), git.
 WS1 also needs the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
 
 ```sh
@@ -16,6 +16,15 @@ git clone https://github.com/krish-arora-88/SurRealDeal.git && cd SurRealDeal
 make setup   # uv sync + npm ci + copies .env.example to .env
 make dev     # API on :8000, PWA on :3000; Ctrl-C stops both
 ```
+
+On Windows, use the command file instead of `make setup` and `make dev`:
+
+```powershell
+.\dev.cmd setup  # install dependencies and create .env if it doesn't exist
+.\dev.cmd dev    # start both servers; Ctrl-C stops them
+```
+
+`dev.cmd dev` refuses to start until setup has installed apps/web/node_modules and created .env.
 
 Open http://localhost:3000. With an empty `.env` everything runs on **mock data**: a new device gets five seeded
 list items, mock flyers for five stores, canned receipt and voice extraction. API docs: http://localhost:8000/docs.
