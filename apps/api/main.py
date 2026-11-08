@@ -231,6 +231,9 @@ def _listed(items: list[UserItem], postal: str) -> list[ListItem]:
             for i in items]
 
 
+# --- the person's list -----------------------------------------------------------------------------------------
+# Every response is a ListItem: the saved item plus its cheapest current flyer listing, recomputed on each read so a
+# new week's flyers are reflected without touching what the person saved.
 @app.get("/items")
 def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
     """My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}."""
@@ -240,6 +243,8 @@ def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
 @app.post("/items")
 def save_items(user_id: UserId, body: SaveItems, postal: Postal) -> list[ListItem]:
     """Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing)."""
+    # A client can say "this came from a flyer", which skips the all-four-fields rule. Only believe it when a current
+    # listing really is that product; otherwise it is stored as a plain manual item.
     if body.source == "flyer":  # the client's claim, and it would exempt these items from needing all four fields
         flyers = _flyers_or_none(postal)
         if not all(logic.is_listing(i, flyers) for i in body.items):
@@ -254,6 +259,7 @@ def update_item(user_id: UserId, user_item_id: str, body: ItemPatch, postal: Pos
     item = store.update_item(user_id, user_item_id, body, postal)
     if item is None:
         raise HTTPException(404, "no such item")
+    # model_fields_set is what the client actually sent, so a PATCH that only toggles the basket never demotes an item.
     edited = body.model_fields_set & _IDENTITY
     if item.source == "flyer" and edited and not logic.is_listing(item, _flyers_or_none(postal)):
         item = store.set_source(user_id, user_item_id, "manual", postal) or item  # no flyer lists this any more
@@ -271,6 +277,7 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
     store.delete_item(user_id, user_item_id)
 
 
+# --- comparisons -------------------------------------------------------------------------------------------------
 @app.get("/deals")
 def get_deals(user_id: UserId, postal: Postal) -> list[Deal]:
     """Every store's cheapest exact listing for every item on My List."""
@@ -284,6 +291,8 @@ def get_basket(user_id: UserId, postal: Postal) -> Basket:
     return logic.basket(items, logic.deals_for(items, store.flyer_items(postal)))
 
 
+# --- flyers --------------------------------------------------------------------------------------------------------
+# `live` is true when this process is serving real Flipp feeds (rather than canned data or Databricks tables).
 @app.get("/flyers/status")
 def flyers_status(postal: Postal) -> FlyersStatus:
     """Whether this week's flyers near a postal code are loaded. The first request for a new postal code starts the
@@ -301,6 +310,7 @@ def flyers_status(postal: Postal) -> FlyersStatus:
 
 @app.post("/ask", dependencies=[Depends(ask_limit)])
 def ask_genie(body: AskRequest, postal: Postal) -> AskResponse:
+    # 503 (not 404) when Genie isn't configured, so the app can tell "not set up" from "wrong URL".
     """Ask Genie about this week's deals in plain words. 503 until the Genie space exists."""
     if not genie.available():
         raise HTTPException(503, "Genie isn't set up yet")
@@ -316,6 +326,7 @@ def browse_flyer_items(postal: Postal, q: str | None = None,
                        sort: Literal["savings", "price", "ends", "az", "relevance"] = "savings", page: int = 1,
                        page_size: int = 30, category: str | None = None) -> FlyerBrowsePage:
     """The Flyers tab: every current listing near the postal code, one row per product at its cheapest store."""
+    # Pagination is clamped here, not trusted: page 1 or later, and at most 100 rows however large a client asks.
     page, page_size = max(1, page), max(1, min(page_size, 100))
     flyers = store.flyer_items(postal)
     groups = logic.browse_flyers(flyers, q, store_name, sort, category)
@@ -332,6 +343,7 @@ def get_page(page_id: str) -> PageView:
     tiles = store.page_tiles(page_id)
     if not tiles:
         raise HTTPException(404, "page not in a current flyer")
+    # Page navigation comes from the store's other pages in the same flyer; a page with no neighbours returns null links.
     f = tiles[0]
     live = flyers_live.page_aspect(page_id) if store.MOCK and flyers_live.ENABLED else None  # Flipp's real page image
     pages = store.flyer_pages(f)
@@ -350,6 +362,8 @@ def get_page(page_id: str) -> PageView:
          responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}})
 def get_page_image(page_id: str, background: BackgroundTasks) -> Response:
     """The real printed page: from the flyers Volume (Databricks) or stitched from Flipp's image tiles (live)."""
+    # Two sources for the picture: a stored image (Databricks) or one stitched from Flipp's small image tiles on
+    # demand. Stitched pages are cached for a day; the neighbouring pages are warmed after the response.
     path = next((t.image_path for t in store.page_tiles(page_id) if t.image_path), None)
     if not path:
         jpeg = flyers_live.page_jpeg(page_id) if store.MOCK and flyers_live.ENABLED else None
