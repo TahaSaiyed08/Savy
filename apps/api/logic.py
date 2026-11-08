@@ -36,6 +36,7 @@ _WORD = re.compile(r"[a-z0-9%]+")
 
 
 def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
+    # The human-readable name shown everywhere: "Kraft Peanut Butter Smooth 1 kg", skipping whichever parts are blank.
     size = f"{x.size_qty:g} {x.size_unit}" if x.size_qty and x.size_unit else ""
     return " ".join(p for p in (x.brand, x.item, x.variant, size) if p)
 
@@ -44,11 +45,13 @@ def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
 def _words(s: str | None) -> frozenset[str]:
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().replace("'", "")
     s = re.sub(r"\s+%", "%", s)  # "2 %" (bilingual labels) == "2%"
+    # Drop a trailing plural "s" so "eggs" == "egg", but keep "ss" words ("grass") and short words ("gas", "bus").
     return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
                      for w in _WORD.findall(s))
 
 
 def size_of(x: UserItem | FlyerItem) -> Size | None:
+    # The size as a base-unit quantity (millilitres, grams or each) so 2 L and 2000 mL are the same number.
     return size_from(x.size_qty, x.size_unit)
 
 
@@ -64,6 +67,7 @@ def missing(u: UserItem) -> list[str]:
 
 
 def same_item(u: UserItem, f: FlyerItem) -> bool:
+    # The one rule for "this listing is the person's item": every field filled in, and every field equal.
     return not missing(u) and _identical(u, f)
 
 
@@ -73,11 +77,14 @@ def is_listing(x: UserItem | ExtractedItem, flyers: list[FlyerItem]) -> bool:
 
 
 def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
+    # Words must match exactly for brand/item/variant (so "2%" never matches "1%", and "milk" never matches
+    # "chocolate milk"); only the size gets a tolerance window.
     if any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
         return False
     want = size_of(u)
     if want is None:  # only a flyer-added item gets here: its size is its listing's, and that listing has none
         return size_of(f) is None
+    # Some flyers only print the size inside the tile text, so fall back to reading it from there.
     have = size_of(f) or normalize_unit(f.raw_text or "")  # "$0.79 /lb" with no size field
     if have is None or have.unit != want.unit:
         return False
