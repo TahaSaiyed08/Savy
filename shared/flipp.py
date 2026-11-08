@@ -448,9 +448,9 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
 
 
 def fetch_grocery_flyer(merchant: str, store_key: str, postal: str = DEFAULT_POSTAL) -> dict:
-    """One named store's weekly grocery flyer. `pages` is always []: this older entry point (used by the Databricks
-    pipeline) has no stored page images, so the app can lay the cutouts out at their boxes. The live API gets real
-    page pictures instead, by stitching them on demand with render_page. `rows` is the real value."""
+    """One named store's weekly grocery flyer, by merchant name. Only the tests call this today: the live API goes
+    through flyers_live -> grocery_flyers_for -> fetch_flyer, and the Databricks pipeline has its own fetcher in
+    databricks/fetchers/flipp.py. `pages` is always []: real page pictures are stitched on demand by render_page."""
     flyer = grocery_flyer_for(list_weekly_flyers(postal), merchant)
     if flyer is None:
         raise RuntimeError(f"no Groceries flyer found for merchant={merchant!r} near {postal}")
