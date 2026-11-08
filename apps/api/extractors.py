@@ -161,8 +161,11 @@ class GeminiExtractor:
 
     URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     TIMEOUT = 40.0  # one attempt on the main model: a receipt takes 5 to 20 s, so longer means it has stalled
-    FALLBACK_TIMEOUT = 25.0  # one attempt on the lighter model, which answers the same receipt in a few seconds
-    ATTEMPTS = 3  # in total: the main model once, then the fallback (or the main model again if there is none)
+    FALLBACK_TIMEOUT = 25.0  # one attempt on a lighter model, which answers the same receipt in about 4 s
+    # A model that just failed is skipped for a while, so the next scan does not spend 10 to 20 s waiting on it again.
+    # Shared by every request: one scan finding the main model out of quota helps all the ones after it.
+    COOLDOWN = {429: 120.0, 500: 30.0, 502: 30.0, 503: 30.0, "timeout": 60.0}
+    _cooling: dict[str, float] = {}  # model -> time.monotonic() until which it is skipped
 
     def __init__(self) -> None:
         self.key = os.getenv("GEMINI_API_KEY")
@@ -171,34 +174,45 @@ class GeminiExtractor:
         self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         if not re.fullmatch(r"[\w.-]+", self.model):  # the name goes into the URL path
             raise ValueError(f"GEMINI_MODEL={self.model!r} isn't a model name")
-        # When the main model is rate limited or stalls, a lighter one answers instead. Set it empty to turn this off.
-        self.fallback = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite")
-        if self.fallback and not re.fullmatch(r"[\w.-]+", self.fallback):
-            raise ValueError(f"GEMINI_FALLBACK_MODEL={self.fallback!r} isn't a model name")
+        # When the main model is out of quota, busy or stalled, these answer instead, in this order. Each lighter model
+        # has its own quota and its own busy spells, which is why there are several. Set it empty to turn this off.
+        default = "gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite"
+        names = os.getenv("GEMINI_FALLBACK_MODEL", default)
+        self.fallbacks = [n.strip() for n in names.split(",") if n.strip() and n.strip() != self.model]
+        for n in self.fallbacks:
+            if not re.fullmatch(r"[\w.-]+", n):
+                raise ValueError(f"GEMINI_FALLBACK_MODEL has {n!r}, which isn't a model name")
 
     def _post(self, body: dict) -> httpx.Response:
-        """Ask Gemini, and keep going past the two things that go wrong in practice: it is busy (429, 500, 502, 503) or
-        it stalls (a timeout). The first attempt uses the main model; the rest use the fallback, which is lighter and
-        has its own quota. Returns the last busy response (so the caller reports its status) or re-raises the last
-        timeout; any other answer, an error like 400 or 403 included, is returned at once."""
+        """Ask Gemini, and keep going past the two things that go wrong in practice: a model is out of quota or busy
+        (429, 500, 502, 503) or it stalls (a timeout). The main model goes first, then each fallback in turn, each at
+        most once; a model that failed recently is skipped (unless every model did). Returns the last refusal (so the
+        caller reports its status) or re-raises the last timeout; any other answer, an error like 400 or 403
+        included, is returned at once."""
         headers = {"x-goog-api-key": self.key}
+        chain = [self.model, *self.fallbacks]
+        if len(chain) == 1:
+            chain *= 2  # nothing to fall back to: try the one model again
+        now = time.monotonic()
+        ready = [m for m in chain if self._cooling.get(m, 0) <= now]
         last: httpx.Response | Exception | None = None
-        for n in range(self.ATTEMPTS):
-            model = self.model if n == 0 or not self.fallback else self.fallback
-            timeout = self.TIMEOUT if model == self.model else self.FALLBACK_TIMEOUT
+        for n, model in enumerate(ready or chain):
             if n:
-                time.sleep(min(2 * n, 4))  # a short pause: rate limits clear in seconds
+                time.sleep(1)  # a short pause between models
             try:
-                r = httpx.post(self.URL.format(model=model), headers=headers, json=body, timeout=timeout)
+                r = httpx.post(self.URL.format(model=model), headers=headers, json=body,
+                               timeout=self.TIMEOUT if model == self.model else self.FALLBACK_TIMEOUT)
             except httpx.TimeoutException as e:
+                self._cooling[model] = time.monotonic() + self.COOLDOWN["timeout"]
                 last = e
                 continue
-            if r.status_code not in (429, 500, 502, 503):
+            if r.status_code not in self.COOLDOWN:
                 return r
+            self._cooling[model] = time.monotonic() + self.COOLDOWN[r.status_code]
             last = r
         if isinstance(last, Exception):
             raise last
-        return last  # type: ignore[return-value]  # ATTEMPTS >= 1, so something was tried
+        return last  # type: ignore[return-value]  # the chain is never empty, so something was tried
 
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
         parts: list[dict] = []
