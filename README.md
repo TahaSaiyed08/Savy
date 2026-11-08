@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:248A3D,100:30D158&height=160&section=header&text=Real%20Deal&fontSize=50&fontColor=ffffff&animation=fadeIn" width="100%" alt="Real Deal" />
+</p>
+
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&size=20&pause=1200&color=30D158&center=true&vCenter=true&width=640&lines=Weekly+flyers+from+5+Vancouver+chains;Matched+to+what+you+actually+buy;Cheapest+store+for+your+whole+basket;Built+on+Databricks+%2B+Claude" alt="Weekly flyers from 5 Vancouver chains, matched to what you actually buy, cheapest store for your whole basket, built on Databricks + Claude" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" width="300" alt="Demo: My List populated, adding 2% milk 4 L by typing it, the parsed confirm screen, the item landing back in My List, matched in Deals, and the Basket split-shop view" />
+</p>
+
 # Real Deal
 
 Weekly grocery flyers from five Vancouver chains, matched to what a UBC student actually buys (learned from their
@@ -34,7 +46,8 @@ On your phone: run `make tunnel` in a second terminal (`brew install cloudflared
 mic and home-screen install need HTTPS anyway. The URL changes each run.
 
 Other targets: `make test` (pytest), `make lint` (ruff + eslint + tsc), `make gen-api` (regenerate the typed web
-client after changing the API; CI fails if you forget).
+client after changing the API; CI fails if you forget), `make flipp-snapshot` (refresh mock data with this
+week's real flyer prices — see "Flyer data: Flipp integration" below).
 
 ## Environment variables
 
@@ -114,6 +127,46 @@ Check it: open the app URL in a browser where you're signed in to Databricks and
 **Before judging:** Free Edition stops apps after 24 hours, so restart it Sunday morning
 (`databricks apps start realdeal-api`), then load the Deals tab once so the SQL warehouse is warm. If the PWA shows
 "Couldn't get a Databricks token", run the `databricks auth login` command again.
+## Flyer data: Flipp integration
+
+Real flyer data comes from [Flipp](https://flipp.com)'s public, unauthenticated flyer API
+(`https://backflipp.wishabi.com/flipp`) via `shared/flipp.py` — unofficial, so the client is throttled
+(0.5 s between calls), retries once, times out at 20 s, and sends a descriptive User-Agent. Endpoints used:
+
+| Endpoint | Gives us |
+| --- | --- |
+| `GET /flyers?locale=en-ca&postal_code=<postal>` | This week's flyers for a postal code; filtered to the merchant + a `categories_csv` containing "Groceries" (a merchant can run non-grocery flyers too, e.g. Superstore's Toy Book) |
+| `GET /flyers/{id}?locale=en-ca` | A flyer's item list + pages. `pages[]` carries no image URL (confirmed live on five flyers) |
+| `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (the full flyer page this item sits on) |
+| `GET /items/search?locale=en-ca&postal_code=<postal>&q=<q>` | Cross-merchant search, used only by the optional live-match fallback below |
+
+`to_extracted_item()` parses an item (+ detail) into the same `ExtractedItem` shape every other extraction
+mode returns, reading size from `description` first and falling back to parsing it out of the product name;
+rows with no price anywhere are skipped. `fetch_grocery_flyer()` only spends the extra `/items/{id}` call when
+the list data alone didn't already give a price and a parseable size.
+
+**Fetchers** (`databricks/fetchers/<store>.py`) call `shared.flipp.fetch_grocery_flyer()` and upload page images
+(when Flipp has any — today it doesn't) plus a `flyers/<store>/<week_start>/flipp_items.json` sidecar of
+structured rows to the Volume. The `--from-dir` hand-screenshot fallback is unchanged.
+
+**Mock mode with real prices**: `make flipp-snapshot` (`apps/api/snapshot_flipp.py`) saves all five stores'
+current flyers to `apps/api/data/flipp_snapshot.json`. `apps/api/mock_data.py` loads it if present, falling
+back to the small canned list otherwise — the API never touches the network for this at request time; refresh
+the snapshot by hand whenever you want fresher demo prices.
+
+**Fallback loader**: `databricks/setup/load_flipp_items.py` writes `flipp_items.json` rows straight into
+`realdeal.core.flyer_items`, for when `ai_query` misses the 85% accuracy bar (or hasn't run yet). Read its
+docstring before using it — `flyer_items` is a Lakeflow Declarative Pipeline streaming table, not a plain
+managed table, so there's a real caveat about writing into it directly.
+
+**Accuracy check**: `databricks/setup/golden_check.py --week YYYY-MM-DD` fuzzy-matches `ai_query`'s
+`flyer_items` rows against the Flipp ground truth for the same store/week and prints field accuracy —
+the 13:00 Sat go/no-go number.
+
+**Optional live match fallback**: if AI Search and the SQL `LIKE` fallback both come up empty for a saved
+item, `apps/api/store.py` tries one cached (1 h) Flipp search and scores results with the usual
+`logic.match_score` threshold — the only network call allowed on a request path, and only reached when both
+of the normal paths already failed.
 
 ## Claim a workstream
 
@@ -129,7 +182,7 @@ Done, on [`ws3/polish`](https://github.com/krish-arora-88/SurRealDeal/pull/3) (o
   (`src/components/list/{AddMethodsSheet,ReceiptConfirmSheet,PickProductSheet,TypeOrSaySheet}.tsx`)
 - Confirm screens flag low-confidence rows (`confidence < 0.6`) for edit before `POST /items`; product photo
   shows a chip picker over the extractor's candidates
-- Deals ("exact" vs "probable match" from `match_score`) and Basket (cheapest store, split-shop, dollar delta,
+- Deals (exact matches only: brand, item, variant and size) and Basket (cheapest store, split-shop, dollar delta,
   "no deal this week") tabs
 - Client-side image downscale (≤2000px, JPEG q0.8) before every upload; avoids the API's 413 and normalizes
   iPhone HEIC
@@ -148,7 +201,7 @@ Done, on [`ws3/polish`](https://github.com/krish-arora-88/SurRealDeal/pull/3) (o
 apps/api/        FastAPI: routes (main.py), models mirroring the tables, extractors, SQL client, STT proxy
 apps/web/        Next.js 15 PWA: 3 tabs, HIG tokens (src/app/globals.css), typed client (src/lib/)
 shared/          normalize_unit + tests, versioned prompts (flyer_page, receipt, product, manual)
-databricks/      sql/ (DDL, views), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (one per store), setup/
+databricks/      sql/ (DDL), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (Flipp, all 5 stores), setup/
 databricks.yml   Asset bundle for the pipeline
 app.yaml         Databricks App that hosts the API for the demo (requirements.txt is its package list)
 .mcp.json        Databricks docs MCP (devhub-docs) for Claude Code

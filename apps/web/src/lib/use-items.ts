@@ -2,9 +2,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, withUser, type Schemas } from "@/lib/api";
 
-/** My List state + mutations, shared by the list page and every intake sheet that saves into it. */
+/** Pantry state + mutations, shared by the list page and every intake sheet that saves into it. */
 export function useItems() {
-  const [items, setItems] = useState<Schemas["UserItem"][] | undefined>();
+  const [items, setItems] = useState<Schemas["ListItem"][] | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [deleteError, setDeleteError] = useState<string | undefined>();
@@ -51,5 +51,36 @@ export function useItems() {
     [items],
   );
 
-  return { items, loading, error, deleteError, addItems, deleteItem, refetch };
+  /** Moves a Pantry item into/out of the Basket. Optimistic, rolled back with deleteError's banner on failure. */
+  const setBasket = useCallback(
+    async (userItemId: string, inBasket: boolean) => {
+      setDeleteError(undefined);
+      const previous = items;
+      setItems((prev) => prev?.map((i) => (i.user_item_id === userItemId ? { ...i, in_basket: inBasket } : i)));
+      try {
+        const { error } = await api.POST("/items/{user_item_id}/basket", {
+          params: { header: withUser().header, path: { user_item_id: userItemId } },
+          body: { in_basket: inBasket },
+        });
+        if (error) throw new Error("basket update failed");
+      } catch {
+        setItems(previous);
+        setDeleteError(inBasket ? "Couldn't move to Basket" : "Couldn't remove from Basket");
+      }
+    },
+    [items],
+  );
+
+  /** Edits a Pantry item's identity. Throws on failure so the edit sheet can stay open and offer a retry. */
+  const updateItem = useCallback(async (userItemId: string, fields: Schemas["ItemPatch"]) => {
+    const { data, error } = await api.PATCH("/items/{user_item_id}", {
+      params: { header: withUser().header, path: { user_item_id: userItemId } },
+      body: fields,
+    });
+    if (error || !data) throw new Error("edit failed");
+    setItems((prev) => prev?.map((i) => (i.user_item_id === userItemId ? data : i)));
+    return data;
+  }, []);
+
+  return { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch };
 }

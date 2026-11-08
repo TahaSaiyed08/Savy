@@ -1,5 +1,9 @@
 # Real Deal — MVP Design
 
+> **Superseded for matching (PR #12):** matching is now exact (brand, item, variant and size; see
+> `apps/api/logic.py`). AI Search, `flyer_items_idx`, `my_deals`, the 0.75 threshold and "probable match" are gone,
+> and one Flipp fetcher (`databricks/fetchers/flipp.py`) replaces the per-store fetchers. The rest of this spec stands.
+
 Nov 7, 2026 · @PSA ClaudeCode2
 
 ## Overview
