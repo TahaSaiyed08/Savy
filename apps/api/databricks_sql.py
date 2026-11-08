@@ -14,16 +14,22 @@ from databricks.sdk.service.sql import (
 )
 
 log = logging.getLogger(__name__)
+# Reads are wrapped so one slow warehouse can't take the whole app down: each successful result is remembered, and if
+# the same read later times out or errors, the remembered answer is served (with a warning in the log).
 _last_good: OrderedDict[tuple, list[dict]] = OrderedDict()  # LRU: keys include user ids, so bound it
 _MAX_CACHED = 2000
+# Python type -> SQL parameter type. Anything not listed (strings, UUIDs, None) is sent as a STRING parameter.
 _TYPES = {bool: "BOOLEAN", int: "BIGINT", float: "DOUBLE", datetime: "TIMESTAMP", date: "DATE"}
 
 
+# One client for the life of the process, shared by every request and by refine.py and genie.py.
 @cache
 def _client() -> WorkspaceClient:
     return WorkspaceClient()  # reads DATABRICKS_HOST / DATABRICKS_TOKEN
 
 
+# Values never get pasted into the SQL text: they travel as named parameters (:name), which is what keeps every
+# statement in store.py a fixed literal and closes off SQL injection.
 def _params(params: dict) -> list[StatementParameterListItem]:
     return [StatementParameterListItem(name=k, value=None if v is None else str(v), type=_TYPES.get(type(v), "STRING"))
             for k, v in params.items()]
@@ -34,6 +40,7 @@ def _rows(r) -> list[dict]:
         raise RuntimeError(f"statement {r.status.state}: {r.status.error}")
     if not r.manifest or not r.manifest.schema.columns:
         return []
+    # The API returns rows as bare lists of strings plus a separate schema; zip them into dicts keyed by column name.
     cols = [c.name for c in r.manifest.schema.columns]
     return [dict(zip(cols, row, strict=True)) for row in (r.result.data_array or [])]
 
@@ -45,6 +52,7 @@ def _run(sql: str, params: dict) -> list[dict]:
         catalog="realdeal",
         schema="core",
         parameters=_params(params),
+        # A request path must never hang on the warehouse: wait 5 s, and if it isn't done, cancel it.
         wait_timeout="5s",
         on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
     )
@@ -56,6 +64,7 @@ def run_long(sql: str, timeout: float = 90.0, **params) -> list[dict]:
 
     Never cached, and outside the 5 s budget of query()/execute(), which stays the rule for everything else.
     """
+    # Unlike _run, this lets a statement keep running after the first 50 s and polls for it, for slow AI queries.
     w, deadline = _client(), time.monotonic() + timeout
     r = w.statement_execution.execute_statement(
         statement=sql,
@@ -80,6 +89,7 @@ def query(sql: str, fallback: bool = True, **params) -> list[dict]:
 
     fallback=False for reads right after a write: a stale answer there would undo the write in the user's eyes.
     """
+    # The cache key is the statement plus its parameters, so each user's own list is cached separately.
     key = (sql, tuple(sorted(params.items())))
     try:
         _last_good[key] = rows = _run(sql, params)
