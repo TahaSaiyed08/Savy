@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from typing import Protocol
 
+import httpx
 from fastapi import HTTPException
 
 from apps.api.models import ExtractedItem, Extraction, Mode
@@ -149,6 +151,68 @@ class DatabricksAIExtractor:
             raise RuntimeError(f"ai_query returned no usable extraction: {str(raw)[:200]}") from e
 
 
+class GeminiExtractor:
+    """Google's Gemini API (EXTRACTOR=gemini, or the default when only GEMINI_API_KEY is set).
+
+    Same prompts and Extraction schema as Claude and ai_query, called over REST with httpx so it adds no dependency. The
+    model is asked for JSON that matches the schema, and the reply is validated against it, so a malformed answer fails
+    here (as a 422) instead of reaching the app.
+    """
+
+    URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    TIMEOUT = 60.0  # a receipt photo can take a while
+
+    def __init__(self) -> None:
+        self.key = os.getenv("GEMINI_API_KEY")
+        if not self.key:  # fail at startup, like the other extractors, not on the first upload
+            raise RuntimeError("EXTRACTOR=gemini needs GEMINI_API_KEY")
+        self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        if not re.fullmatch(r"[\w.-]+", self.model):  # the name goes into the URL path
+            raise ValueError(f"GEMINI_MODEL={self.model!r} isn't a model name")
+
+    def _post(self, body: dict) -> httpx.Response:
+        """One call, retried once when Gemini says it is busy (429, 500, 502, 503: spikes are usually brief)."""
+        url, headers = self.URL.format(model=self.model), {"x-goog-api-key": self.key}
+        r = httpx.post(url, headers=headers, json=body, timeout=self.TIMEOUT)
+        if r.status_code in (429, 500, 502, 503):
+            time.sleep(2)
+            r = httpx.post(url, headers=headers, json=body, timeout=self.TIMEOUT)
+        return r
+
+    def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
+        parts: list[dict] = []
+        if image:
+            media_type = sniff_media_type(image)
+            if media_type is None:
+                raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
+                                         "(iPhone: Settings > Camera > Formats > Most Compatible)")
+            parts.append({"inline_data": {"mime_type": media_type, "data": base64.standard_b64encode(image).decode()}})
+        parts.append({"text": text or "Extract the items."})
+        body = {
+            "system_instruction": {"parts": [{"text": load_prompt(mode)}]},
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"responseMimeType": "application/json",
+                                 "responseJsonSchema": Extraction.model_json_schema(), "temperature": 0},
+        }
+        try:
+            r = self._post(body)
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPStatusError as e:  # only the status: the response can echo parts of the request
+            raise ExtractionServiceError(f"Gemini answered {e.response.status_code}") from e
+        except (httpx.HTTPError, ValueError) as e:
+            raise ExtractionServiceError(f"Gemini request failed: {type(e).__name__}") from e
+        try:
+            reply = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError) as e:  # blocked, or an empty answer
+            reason = (data.get("promptFeedback") or {}).get("blockReason") or "no answer"
+            raise RuntimeError(f"Gemini returned no usable extraction: {reason}") from e
+        try:
+            return Extraction.model_validate_json(reply)
+        except ValueError as e:  # the model answered, but not in the schema: treated like a Claude refusal (422)
+            raise RuntimeError(f"Gemini returned no usable extraction: {reply[:200]}") from e
+
+
 # What the app uses with no API keys, so a fresh clone runs end to end. The numbers are chosen to exercise the UI: one
 # low-confidence item per mode shows the "please confirm" sheet.
 class MockExtractor:
@@ -178,12 +242,15 @@ class MockExtractor:
         ])
 
 
-_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor}
+_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor,
+               "gemini": GeminiExtractor}
 
 
 def get_extractor() -> Extractor:
-    # Explicit EXTRACTOR wins; otherwise an Anthropic key means Claude, and no key means the mock.
-    choice = os.getenv("EXTRACTOR") or ("claude" if os.getenv("ANTHROPIC_API_KEY") else "mock")
+    # Explicit EXTRACTOR wins; otherwise an Anthropic key means Claude, a Gemini key means Gemini, and no key means the
+    # mock.
+    choice = os.getenv("EXTRACTOR") or (
+        "claude" if os.getenv("ANTHROPIC_API_KEY") else "gemini" if os.getenv("GEMINI_API_KEY") else "mock")
     if choice not in _EXTRACTORS:
         raise ValueError(f"EXTRACTOR={choice!r} is not one of: {', '.join(_EXTRACTORS)}")
     return _EXTRACTORS[choice]()
