@@ -1,10 +1,11 @@
 """Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
+import asyncio
 import ipaddress
 import logging
 import os
 import time
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 from uuid import UUID
 
@@ -29,10 +30,27 @@ from apps.api.models import (
 log = logging.getLogger(__name__)
 
 
+REMATCH_EVERY = float(os.getenv("REMATCH_EVERY_SECONDS", "300"))  # 0 turns the weekly re-match poll off
+
+
+async def _rematch_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(store.rematch_if_new_week)
+        except Exception:
+            log.warning("weekly re-match failed; retrying in %.0f s", REMATCH_EVERY, exc_info=True)
+        await asyncio.sleep(REMATCH_EVERY)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    task = asyncio.create_task(_rematch_loop()) if REMATCH_EVERY > 0 and not store.MOCK else None
     yield
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)

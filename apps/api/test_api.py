@@ -196,7 +196,7 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
     def no_index():
         raise RuntimeError("no AI Search index")
 
-    def like(sql, rows):
+    def like(sql, rows, fresh=False):
         reads.append(sql)
         return [{"user_item_id": r["user_item_id"], "item_id": f"f-{r['item']}", "brand": "Purex"}
                 for r in json.loads(rows)]
@@ -283,7 +283,175 @@ def test_failed_matching_is_retried_on_next_deals(monkeypatch):
     store.list_deals(uid)
     inserted = [json.loads(p["rows"]) for s, p in writes if "user_item_matches" in s]
     assert inserted == [[{"user_item_id": saved[0].user_item_id, "flyer_item_id": "f1", "match_score": 0.75}]]
-    assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
+    assert uid not in store._unmatched and "MERGE INTO user_item_matches" in next(
+        s for s, _ in writes if "user_item_matches" in s)
+
+
+def test_weekly_rematch_sweeps_each_flyer_change_once(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"sig": "Save-On-Foods=2026-11-05:276:-347", "fail": False}
+    batches, item_reads = [], []
+    items = [{"user_item_id": f"u{n}", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+              "added_at": datetime.now(UTC)} for n in range(250)]
+
+    def query(sql, **p):
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        item_reads.append(state["sig"])
+        return items
+
+    def match(batch):
+        if state["fail"]:
+            raise RuntimeError("warehouse down")
+        batches.append(len(batch))
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_flyers", None)
+    monkeypatch.setattr(store, "_match_and_store", match)
+    monkeypatch.setattr(databricks_sql, "query", query)
+
+    assert store.rematch_if_new_week() == 250 and batches == [100, 100, 50]
+    assert store.rematch_if_new_week() == 0 and len(item_reads) == 1  # unchanged flyers: no item scan
+
+    state["sig"] = "Save-On-Foods=2026-11-05:290:812"  # same week, later pages arrived
+    assert store.rematch_if_new_week() == 250 and len(item_reads) == 2
+
+    state.update(sig="PriceSmart=2026-11-07:40:5,Save-On-Foods=2026-11-05:290:812", fail=True)  # new store flyer
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()
+    state["fail"] = False
+    assert store.rematch_if_new_week() == 250  # the failed sweep is retried, not marked done
+    assert len(item_reads) == 4
+
+
+def test_search_keeps_only_current_flyers_top_three_per_store(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    hits = [["old1", None, 0.99], ["old2", None, 0.98], ["old3", None, 0.97]]  # last week's rows rank first
+    hits += [[f"sof{n}", None, 0.9 - n / 100] for n in range(5)] + [["ss1", None, 0.8]]
+    index = SimpleNamespace(query_index=lambda **kw: SimpleNamespace(result=SimpleNamespace(data_array=hits)))
+    current = [{"item_id": f"sof{n}", "store": "Save-On-Foods"} for n in range(5)]
+    current += [{"item_id": "ss1", "store": "Superstore"}]
+    writes, reads = [], []
+
+    def query(sql, **p):
+        reads.append(sql)
+        assert "inline" not in sql, "the LIKE fallback must not run when the index answered"
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(vector_search_indexes=index))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id="u1", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC))])
+
+    saved = [m["flyer_item_id"] for m in json.loads(writes[0]["rows"])]
+    assert saved == ["sof0", "sof1", "sof2", "ss1"] and len(reads) == 1
+
+
+def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
+    from apps.api import databricks_sql
+
+    up = {"ok": True}
+
+    def run(sql, params):
+        if not up["ok"]:
+            raise RuntimeError("warehouse down")
+        return [{"n": 1}]
+
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]
+    up["ok"] = False
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]  # screens still get the last good result
+    with pytest.raises(RuntimeError):
+        databricks_sql.query("SELECT 1", fresh=True)
+
+
+def test_sweep_does_not_mark_done_from_a_cached_item_scan(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"sig": "Save-On-Foods=2026-11-05:276:1", "items_up": True}
+    item = {"user_item_id": "u1", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+            "added_at": datetime.now(UTC)}
+
+    def run(sql, params):  # only the warehouse is faked; the real query() and its cache are exercised
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        if not state["items_up"]:
+            raise RuntimeError("user_items scan timed out")
+        return [item]
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_flyers", None)
+    monkeypatch.setattr(store, "_match_and_store", lambda batch: None)
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+
+    assert store.rematch_if_new_week() == 1  # caches a good item scan
+    state.update(sig="Save-On-Foods=2026-11-12:300:2", items_up=False)
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()  # must not re-match the cached snapshot
+    assert store._swept_flyers == "Save-On-Foods=2026-11-05:276:1"  # new flyers not marked swept
+
+
+def test_every_current_store_gets_matched_via_search_or_fallback(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    # Global top-N is all Save-On; No Frills is in the index (store-filtered search finds it); T&T isn't synced yet.
+    by_store = {None: [["sof1", None, 0.9], ["sof2", None, 0.85]], "No Frills": [["nf1", None, 0.8]], "T&T": []}
+    searches = []
+
+    def query_index(**kw):
+        s = json.loads(kw["filters_json"])["store"][0] if "filters_json" in kw else None
+        searches.append(s)
+        return SimpleNamespace(result=SimpleNamespace(data_array=by_store[s]))
+
+    current = [{"item_id": "sof1", "store": "Save-On-Foods"}, {"item_id": "sof2", "store": "Save-On-Foods"},
+               {"item_id": "nf1", "store": "No Frills"}, {"item_id": "tt1", "store": "T&T"}]
+    like_stores, writes = [], []
+
+    def query(sql, **p):
+        if "inline" in sql:  # LIKE fallback
+            rows = json.loads(p["rows"])
+            like_stores.extend(r["stores"] for r in rows)
+            return [{"user_item_id": rows[0]["user_item_id"], "item_id": "tt1", "brand": None}]
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client",
+                        lambda: SimpleNamespace(vector_search_indexes=SimpleNamespace(query_index=query_index)))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id=f"u{n}", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC)) for n in (1, 2)])
+
+    from collections import Counter
+    # Per item: one global search; per store: one probe; per item again only for stores the index holds.
+    # Save-On needed no top-up, and unsynced T&T is probed once, not searched per item.
+    assert Counter(searches) == {None: 2, "No Frills": 3, "T&T": 1}
+    assert like_stores == [["T&T"], ["T&T"]]  # fallback only for the store the index can't answer
+    saved = {(m["user_item_id"], m["flyer_item_id"]) for m in json.loads(writes[0]["rows"])}
+    assert saved == {(u, f) for u in ("u1", "u2") for f in ("sof1", "sof2", "nf1")} | {("u1", "tt1")}
+
+
+def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):
+    from apps.api import store
+
+    monkeypatch.setattr(store, "MOCK", True)
+    assert store.rematch_if_new_week() == 0
 
 
 def test_unknown_extractor_is_rejected(monkeypatch):
