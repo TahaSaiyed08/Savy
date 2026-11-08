@@ -101,4 +101,7 @@ def test_fetch_grocery_flyer_end_to_end(monkeypatch):
     assert len(result["rows"]) > 0
     row = result["rows"][0]
     assert row["store"] == "No Frills" and row["item_id"].startswith("flipp-")  # display name, not the slug
+    assert row["week_start"] == "2026-11-05"
+    assert all(set(r) == set(flipp.FlyerItem.model_fields) for r in result["rows"])
+    assert all(flipp.FlyerItem(**r).model_dump(mode="json") == r for r in result["rows"])
     assert all(r["price"] is not None for r in result["rows"])  # priceless rows were skipped

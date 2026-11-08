@@ -140,19 +140,6 @@ def flyer_item_from(
     )
 
 
-def flyer_items_table_row(fi: FlyerItem, confidence: float = 0.95) -> dict:
-    """The literal realdeal.core.flyer_items row shape: FlyerItem plus confidence/match_text, which the real
-    table has (from the ai_query pipeline output) but the frozen FlyerItem Pydantic model doesn't carry.
-    JSON-serializable (week_start as an ISO string) for both the sidecar file and SQL array parameters.
-    """
-    row = {key: value for key, value in fi.model_dump(mode="json").items() if key in FLYER_ITEM_COLUMNS}
-    row["confidence"] = confidence
-    row["match_text"] = " ".join(p for p in (fi.brand, fi.item, fi.variant,
-                                              f"{fi.size_qty:g}{fi.size_unit}" if fi.size_qty and fi.size_unit else "")
-                                 if p)
-    return row
-
-
 def _needs_detail(extracted: ExtractedItem | None, item: dict) -> bool:
     """Whether to spend an extra /items/{id} call: only when the list alone couldn't give a price or a size."""
     if extracted is None:
