@@ -14,6 +14,16 @@ class Extractor(Protocol):
     ) -> Extraction: ...
 
 
+_MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
+
+
+def sniff_media_type(image: bytes, declared: str) -> str:
+    """Media type from the file's bytes. Browsers and renamed files mislabel uploads, and Claude rejects mismatches."""
+    if image[:4] == b"RIFF" and image[8:12] == b"WEBP":
+        return "image/webp"
+    return next((t for magic, t in _MAGIC if image.startswith(magic)), declared)
+
+
 class ClaudeExtractor:
     """Anthropic API. The fallback if ai_query is unavailable on the workspace (11:00 go/no-go)."""
 
@@ -27,6 +37,7 @@ class ClaudeExtractor:
         content: list[dict] = []
         if image:
             data = base64.standard_b64encode(image).decode()
+            media_type = sniff_media_type(image, media_type)
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
         r = self.client.messages.parse(

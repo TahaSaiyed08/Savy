@@ -4,6 +4,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from apps.api import logic
+from apps.api.extractors import sniff_media_type
 from apps.api.main import app
 from apps.api.mock_data import FLYER_ITEMS
 
@@ -33,6 +34,13 @@ def test_mock_flow_end_to_end():
 def test_rejects_non_image_receipt():
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.txt", io.BytesIO(b"x"), "text/plain")})
     assert r.status_code == 415
+
+
+def test_media_type_comes_from_bytes_not_the_label():
+    assert sniff_media_type(b"\xff\xd8\xff\xe0rest", "image/png") == "image/jpeg"
+    assert sniff_media_type(b"\x89PNG\r\n\x1a\nrest", "image/jpeg") == "image/png"
+    assert sniff_media_type(b"RIFF\0\0\0\0WEBPrest", "image/jpeg") == "image/webp"
+    assert sniff_media_type(b"unknown", "image/heic") == "image/heic"
 
 
 def test_voice_uses_mock_transcript():
