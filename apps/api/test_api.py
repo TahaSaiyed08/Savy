@@ -31,7 +31,7 @@ def test_mock_flow_end_to_end():
     assert len(items) == 5
     milk = next(i for i in items if i["item"] == "milk")
     assert milk["in_basket"] and milk["cheapest"]["store"] == "Safeway"
-    assert next(i for i in items if i["item"] == "ramen")["missing"] == ["brand", "variant", "size"]
+    assert next(i for i in items if i["item"] == "ramen")["missing"] == ["brand", "size"]
     deals = c.get("/deals", headers=H).json()
     assert {d["store"] for d in deals} >= {"No Frills", "Safeway"}
 
@@ -377,7 +377,7 @@ def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
 
     up = {"ok": True}
 
-    def run(sql, params):
+    def run(sql, params, wait="5s"):
         if not up["ok"]:
             raise RuntimeError("warehouse down")
         return [{"n": 1}]
@@ -626,11 +626,35 @@ def test_word_order_punctuation_plural_and_accents_are_not_differences():
     assert logic.same_item(_want(brand="Rugen"), _flyer(brand="Rügen"))
 
 
-def test_every_field_is_required_to_match():
-    for blank in ("brand", "variant"):
-        u = _want(**{blank: None})
-        assert not logic.same_item(u, _flyer(**{blank: None})) and logic.missing(u) == [blank]
+def test_brand_and_size_are_required_to_match():
+    u = _want(brand=None)
+    assert not logic.same_item(u, _flyer(brand=None)) and logic.missing(u) == ["brand"]
     assert logic.missing(_want(size_qty=None)) == ["size"]
+
+
+def test_a_blank_variant_only_matches_a_listing_with_no_variant():
+    plain = _want(variant=None)
+    assert logic.missing(plain) == [] and logic.same_item(plain, _flyer(variant=None))
+    assert not logic.same_item(plain, _flyer(variant="2%"))  # "milk" is not "2% milk", either way round
+    assert not logic.same_item(_want(variant="2%"), _flyer(variant=None))
+
+
+def test_first_flyer_load_waits_out_a_cold_warehouse(monkeypatch):
+    from apps.api import databricks_sql, store
+
+    waits = []
+    row = {"item_id": "f1", "page_id": "p1", "store": "Safeway", "week_start": "2026-11-05", "item": "milk",
+           "price": "5.99", "valid_to": "2026-11-11"}
+    clock = [1000.0]
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_flyer_cache", (float("-inf"), []))
+    monkeypatch.setattr(store.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(store, "date", SimpleNamespace(today=lambda: date(2026, 11, 7)))
+    monkeypatch.setattr(databricks_sql, "query", lambda sql, fallback=True, wait="5s", **p: waits.append(wait) or [row])
+    store.flyer_items()
+    clock[0] += store.FLYER_TTL + 1
+    store.flyer_items()
+    assert waits == ["45s", "5s"]  # a refresh with a copy in hand stays on the short budget
 
 
 def test_counts_are_exact_and_per_lb_ignores_quantity():
@@ -823,7 +847,7 @@ def test_client_cannot_claim_flyer_source_for_something_no_flyer_lists():
     h = {"X-User-Id": str(uuid.uuid4())}
     body = {"source": "flyer", "items": [{"item": "milk", "confidence": 1}]}
     (saved,) = c.post("/items", headers=h, json=body).json()
-    assert saved["source"] == "manual" and saved["missing"] == ["brand", "variant", "size"] and not saved["cheapest"]
+    assert saved["source"] == "manual" and saved["missing"] == ["brand", "size"] and not saved["cheapest"]
 
 
 def test_real_flyer_item_keeps_its_source_until_edited_away_from_the_listing():
@@ -837,7 +861,7 @@ def test_real_flyer_item_keeps_its_source_until_edited_away_from_the_listing():
     assert c.patch(url, headers=h, json={"in_basket": True}).json()["source"] == "flyer"  # not an identity edit
 
     edited = c.patch(url, headers=h, json={"brand": None, "variant": None, "size_qty": None, "size_unit": None}).json()
-    assert edited["source"] == "manual" and edited["missing"] == ["brand", "variant", "size"] and not edited["cheapest"]
+    assert edited["source"] == "manual" and edited["missing"] == ["brand", "size"] and not edited["cheapest"]
 
 
 def test_flyers_down_means_a_flyer_claim_is_not_trusted(monkeypatch):

@@ -104,7 +104,8 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
         try:
             # Validity is checked here, not in SQL, so this also reads flyer_items built before valid_to existed.
             rows = db.query("SELECT * FROM flyer_items WHERE price IS NOT NULL "
-                            "AND week_start >= date_sub(current_date(), 30)", fallback=False)
+                            "AND week_start >= date_sub(current_date(), 30)", fallback=False,
+                            wait="5s" if items else "45s")  # with no copy yet, wait out a cold warehouse
         except Exception:
             if not items:
                 raise

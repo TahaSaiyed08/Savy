@@ -38,14 +38,14 @@ def _rows(r) -> list[dict]:
     return [dict(zip(cols, row, strict=True)) for row in (r.result.data_array or [])]
 
 
-def _run(sql: str, params: dict) -> list[dict]:
+def _run(sql: str, params: dict, wait: str = "5s") -> list[dict]:
     r = _client().statement_execution.execute_statement(
         statement=sql,
         warehouse_id=os.environ["DATABRICKS_WAREHOUSE_ID"],
         catalog="realdeal",
         schema="core",
         parameters=_params(params),
-        wait_timeout="5s",
+        wait_timeout=wait,
         on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
     )
     return _rows(r)
@@ -75,14 +75,14 @@ def run_long(sql: str, timeout: float = 90.0, **params) -> list[dict]:
     return _rows(r)
 
 
-def query(sql: str, fallback: bool = True, **params) -> list[dict]:
+def query(sql: str, fallback: bool = True, wait: str = "5s", **params) -> list[dict]:
     """Read. Falls back to the last good result for the same query if Databricks is slow or down.
 
     fallback=False for reads right after a write: a stale answer there would undo the write in the user's eyes.
     """
     key = (sql, tuple(sorted(params.items())))
     try:
-        _last_good[key] = rows = _run(sql, params)
+        _last_good[key] = rows = _run(sql, params, wait)
         _last_good.move_to_end(key)
         if len(_last_good) > _MAX_CACHED:
             _last_good.popitem(last=False)

@@ -1,6 +1,7 @@
 """Pure matching and basket rules. No I/O, so they are unit-tested in test_api.py.
 
-Matching is exact: brand, item, variant and size must all be present on the user's item and equal the flyer's.
+Matching is exact: brand, item and size must be present on the user's item, and those plus variant must equal the
+flyer's. A blank variant is a value: it only matches a listing with no variant, since most flyers don't print one.
 Words are compared as a set after lowercasing, stripping accents/punctuation and a trailing plural "s", so
 "Dempster's®" == "dempsters" and "skinless boneless" == "boneless skinless", but "2%" != "1%" and
 milk != chocolate milk.
@@ -31,7 +32,7 @@ from shared.units import Size, normalize_unit, per_weight, size_from, unit_price
 #   mass:   454 g (1 lb) ~ 500 g, 907 g (2 lb) ~ 1 kg (either way)
 #   count:  exact (a dozen is a dozen)
 SIZE_WINDOW = {"ml": (0.94, 1.10), "g": (0.90, 1.11), "ea": (1.0, 1.0)}
-FIELDS = ("brand", "item", "variant", "size")
+FIELDS = ("brand", "item", "size")  # what the user must fill in; variant is compared, blank or not
 _WORD = re.compile(r"[a-z0-9%]+")
 
 

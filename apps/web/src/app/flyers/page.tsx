@@ -22,6 +22,7 @@ const SORTS = [
   ["price", "Price"],
   ["ends", "Ends soon"],
   ["az", "A–Z"],
+  ["relevance", "Best match"], // only offered while searching
 ] as const;
 type Sort = (typeof SORTS)[number][0];
 type Group = Schemas["FlyerGroup"];
@@ -44,7 +45,9 @@ export default function Flyers() {
   const { items, addItems, setBasket } = useItems();
   const [query, setQuery] = useState("");
   const [store, setStore] = useState(ALL);
-  const [sort, setSort] = useState<Sort>("savings");
+  const [chosenSort, setSort] = useState<Sort | null>(null);
+  // Searching defaults to best match: "Biggest savings" puts peanut butter and jam above actual butter.
+  const sort: Sort = query.trim() ? (chosenSort ?? "relevance") : chosenSort === "relevance" || !chosenSort ? "savings" : chosenSort;
   const [groups, setGroups] = useState<Group[]>([]);
   const [stores, setStores] = useState<string[]>([]);
   const [category, setCategory] = useState(ALL);
@@ -196,7 +199,7 @@ export default function Flyers() {
       <label className="flex items-center gap-1 px-4 pb-2 text-[13px] text-label-2">
         Sort:
         <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="min-h-tap bg-transparent text-[13px] font-semibold text-tint outline-none">
-          {SORTS.map(([v, l]) => (
+          {SORTS.filter(([v]) => v !== "relevance" || query.trim()).map(([v, l]) => (
             <option key={v} value={v}>
               {l}
             </option>
