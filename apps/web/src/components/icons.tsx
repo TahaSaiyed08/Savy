@@ -169,6 +169,19 @@ export const ExternalLink = (p: IconProps) => (
   </Icon>
 );
 
+export const Sun = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="4.2" />
+    <path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8" />
+  </Icon>
+);
+
+export const Moon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
+  </Icon>
+);
+
 export const Sparkles = (p: IconProps) => (
   <Icon {...p}>
     <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8Z" />
