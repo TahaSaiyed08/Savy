@@ -75,6 +75,12 @@ phone). Databricks Apps only accept signed-in callers, so the laptop's Next.js s
 Databricks CLI to every `/api/*` request ([`route.ts`](apps/web/src/app/api/[...path]/route.ts)); the browser never
 sees it. Personal access tokens can't be exchanged for app tokens, which is why this uses the CLI login.
 
+Because every proxied call carries that token, **the proxy only serves devices that entered the demo passcode**
+(`DEMO_PASSCODE`, at `/unlock`), and refuses everyone while it's unset. Anyone with the tunnel URL can still load the
+PWA's pages, but its data calls fail until that device is unlocked. The proxy also replaces any client-sent
+`X-Forwarded-For`/`X-Real-IP`/`Forwarded`/`CF-Connecting-IP` with the real visitor IP (Cloudflare's
+`CF-Connecting-IP` through the tunnel), so the API's per-visitor upload limit can't be dodged.
+
 **1. Create the app (workspace admin, once).** Run these where the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html)
 is logged in to the team workspace.
 
@@ -119,13 +125,22 @@ Check it: open the app URL in a browser where you're signed in to Databricks and
    ```sh
    databricks auth login --host https://<workspace>.cloud.databricks.com
    ```
-2. Create `apps/web/.env.local`:
+2. Create `apps/web/.env.local` (git-ignored). Pick a passcode of at least 8 characters, e.g. four random words,
+   and share it only with whoever runs the demo:
    ```
    DATABRICKS_APP_URL=https://<app URL from the app page>
    DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
+   DEMO_PASSCODE=<at least 8 characters>
    ```
 3. Start the PWA as usual (`make dev` or `.\dev.cmd dev`; the local API it also starts is simply unused) and
    `make tunnel` for the phone. Delete `apps/web/.env.local` to go back to the local API.
+4. On each demo device (the phone, and the laptop browser if you use it), open `/unlock` once and enter the
+   passcode. It sets an HttpOnly cookie for 7 days; ten wrong guesses from one IP lock it out for 15 minutes.
+
+**Known limitations (accepted for the demo):** there's no login, so `X-User-Id` is a device-generated ID the API
+trusts as-is; anyone who has unlocked the demo and knows another device's ID could read that list. Without the
+tunnel, a client on the same network can still spoof its forwarded IP, because Next.js keeps a client-sent
+`X-Forwarded-For`; the passcode limits who can reach the proxy, and the API's global upload cap still applies.
 
 **Before judging:** Free Edition stops apps after 24 hours, so restart it Sunday morning
 (`databricks apps start realdeal-api`), then load the Deals tab once so the SQL warehouse is warm. If the PWA shows
@@ -142,35 +157,23 @@ Real flyer data comes from [Flipp](https://flipp.com)'s public, unauthenticated 
 | `GET /flyers?locale=en-ca&postal_code=<postal>` | This week's flyers for a postal code; filtered to the merchant + a `categories_csv` containing "Groceries" (a merchant can run non-grocery flyers too, e.g. Superstore's Toy Book) |
 | `GET /flyers/{id}?locale=en-ca` | A flyer's item list + pages. `pages[]` carries no image URL (confirmed live on five flyers) |
 | `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (the full flyer page this item sits on) |
-| `GET /items/search?locale=en-ca&postal_code=<postal>&q=<q>` | Cross-merchant search, used only by the optional live-match fallback below |
+| `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (a product photo, not the page) |
 
 `to_extracted_item()` parses an item (+ detail) into the same `ExtractedItem` shape every other extraction
 mode returns, reading size from `description` first and falling back to parsing it out of the product name;
 rows with no price anywhere are skipped. `fetch_grocery_flyer()` only spends the extra `/items/{id}` call when
 the list data alone didn't already give a price and a parseable size.
 
-**Fetchers** (`databricks/fetchers/<store>.py`) call `shared.flipp.fetch_grocery_flyer()` and upload page images
-(when Flipp has any — today it doesn't) plus a `flyers/<store>/<week_start>/flipp_items.json` sidecar of
-structured rows to the Volume. The `--from-dir` hand-screenshot fallback is unchanged.
+**Fetcher** (`databricks/fetchers/flipp.py`, all five stores) writes `flyers/<store>/<week_start>/flipp.jsonl`
+to the Volume with each item's exact tile box, page, price and valid dates; the pipeline turns it into
+`flyer_items` (see `docs/plan.md`, WS1 step 6). Page images saved by hand still go through
+`databricks/fetchers/common.py <store> <dir>`.
 
 **Mock mode with real prices**: `make flipp-snapshot` (`apps/api/snapshot_flipp.py`) saves all five stores'
 current flyers to `apps/api/data/flipp_snapshot.json`. `apps/api/mock_data.py` loads it if present, falling
 back to the small canned list otherwise — the API never touches the network for this at request time; refresh
 the snapshot by hand whenever you want fresher demo prices.
 
-**Fallback loader**: `databricks/setup/load_flipp_items.py` writes `flipp_items.json` rows straight into
-`realdeal.core.flyer_items`, for when `ai_query` misses the 85% accuracy bar (or hasn't run yet). Read its
-docstring before using it — `flyer_items` is a Lakeflow Declarative Pipeline streaming table, not a plain
-managed table, so there's a real caveat about writing into it directly.
-
-**Accuracy check**: `databricks/setup/golden_check.py --week YYYY-MM-DD` fuzzy-matches `ai_query`'s
-`flyer_items` rows against the Flipp ground truth for the same store/week and prints field accuracy —
-the 13:00 Sat go/no-go number.
-
-**Optional live match fallback**: if AI Search and the SQL `LIKE` fallback both come up empty for a saved
-item, `apps/api/store.py` tries one cached (1 h) Flipp search and scores results with the usual
-`logic.match_score` threshold — the only network call allowed on a request path, and only reached when both
-of the normal paths already failed.
 
 ## Claim a workstream
 

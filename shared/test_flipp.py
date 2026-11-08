@@ -63,7 +63,7 @@ def test_to_extracted_item_none_when_price_is_empty_string_in_detail_too():
     assert flipp.to_extracted_item(it, detail) is None
 
 
-# --- flyer_item_from / flyer_items_table_row ----------------------------------------------------------------
+# --- flyer_item_from ----------------------------------------------------------------
 
 
 def test_flyer_item_from_computes_unit_price():
@@ -73,18 +73,6 @@ def test_flyer_item_from_computes_unit_price():
     fi = flipp.flyer_item_from(x, item_id="flipp-1", page_id="flipp:1", store="no_frills",
                                week_start=date(2026, 11, 5), raw_text=x.item)
     assert fi.unit_price == pytest.approx(0.1623, abs=1e-3) and fi.unit == "100ml"
-
-
-def test_flyer_items_table_row_adds_confidence_and_match_text():
-    from datetime import date
-
-    x = flipp.to_extracted_item({"name": "milk", "brand": "Dairyland", "price": "5.99"})
-    fi = flipp.flyer_item_from(x, item_id="flipp-2", page_id="flipp:1", store="safeway",
-                               week_start=date(2026, 11, 5), raw_text=x.item)
-    row = flipp.flyer_items_table_row(fi)
-    assert row["confidence"] == 0.95
-    assert row["match_text"] == "Dairyland milk"
-    assert set(row) == set(flipp.FLYER_ITEM_COLUMNS)
 
 
 # --- fetch_grocery_flyer (orchestration, _get monkeypatched) --------------------------------------------------
@@ -113,4 +101,7 @@ def test_fetch_grocery_flyer_end_to_end(monkeypatch):
     assert len(result["rows"]) > 0
     row = result["rows"][0]
     assert row["store"] == "No Frills" and row["item_id"].startswith("flipp-")  # display name, not the slug
+    assert row["week_start"] == "2026-11-05"
+    assert all(set(r) == set(flipp.FlyerItem.model_fields) for r in result["rows"])
+    assert all(flipp.FlyerItem(**r).model_dump(mode="json") == r for r in result["rows"])
     assert all(r["price"] is not None for r in result["rows"])  # priceless rows were skipped

@@ -9,11 +9,11 @@ Verified live 2026-11-07 for postal code V6T1Z4 (near UBC):
   `price` as a plain numeric string, empty for ~14% of items (confirmed live). `pages[]` entries
   (id, left, bottom, right, top, page, name) carry NO image URL, confirmed live on five different flyers.
 - GET /items/{item_id} -> {"item": {...}}. Adds `description` (often not a size, sometimes null),
-  `current_price` (plain numeric string, can be empty), `image_url` (the full flyer PAGE image this item sits
-  on, `http://f.wishabi.net/page_pdf_images/...`).
-- GET /items/search?locale=en-ca&postal_code=<postal>&q=<q> -> {"items": [...]}, NOT scoped to our five
-  merchants. Shape differs from the other two: `current_price` is a float (not a string), there is no `brand`
-  field (only numeric `brand_ids`), and the store name is `merchant_name` (not `merchant`).
+  `current_price` (plain numeric string, can be empty), `image_url` (a product photo, about 353x400, not the
+  flyer page: `http://f.wishabi.net/page_pdf_images/...`).
+
+Used by apps/api/snapshot_flipp.py (mock-mode demo data). The pipeline's Flipp rows come from
+databricks/fetchers/flipp.py, which also keeps each item's tile box, page and valid dates.
 """
 import logging
 import time
@@ -42,22 +42,6 @@ MERCHANT_TO_STORE_KEY = {
     "Safeway": "safeway",
     "T&T Supermarket": "tnt",
 }
-
-# The full-table insert shape (apps.api.models.FlyerItem plus the two columns the real flyer_items table has
-# that the frozen Pydantic model doesn't carry: confidence and match_text). Used by load_flipp_items.py and
-# apps/api/store.py's live search fallback so both stay byte-for-byte in sync with each other.
-# Matches realdeal.core.flyer_items' live schema exactly (confirmed via DESCRIBE TABLE, not inferred —
-# ddl.sql only comments the column names since the pipeline owns this table, see load_flipp_items.py).
-FLYER_ITEM_ROWS_SQL_TYPE = (
-    "ARRAY<STRUCT<page_id: STRING, store: STRING, week_start: STRING, brand: STRING, item: STRING, "
-    "variant: STRING, size_qty: DOUBLE, size_unit: STRING, price: DOUBLE, confidence: DOUBLE, "
-    "raw_text: STRING, bbox: ARRAY<DOUBLE>, item_id: STRING, unit_price: DOUBLE, unit: STRING, "
-    "match_text: STRING>>"
-)
-FLYER_ITEM_COLUMNS = (
-    "page_id", "store", "week_start", "brand", "item", "variant", "size_qty", "size_unit", "price",
-    "confidence", "raw_text", "bbox", "item_id", "unit_price", "unit", "match_text",
-)
 
 _last_call = 0.0
 
@@ -104,11 +88,6 @@ def get_flyer_detail(flyer_id: int) -> dict:
 def get_item_detail(item_id: int) -> dict:
     """Full item record: description, current_price, image_url (the full flyer page this item sits on), ..."""
     return _get(f"/items/{item_id}")["item"]
-
-
-def search(q: str, postal_code: str = DEFAULT_POSTAL) -> list[dict]:
-    """Not scoped to our five merchants; current_price is a float here, and there's no brand field."""
-    return _get("/items/search", locale="en-ca", postal_code=postal_code, q=q).get("items", [])
 
 
 def _price(raw) -> float | None:
@@ -161,19 +140,6 @@ def flyer_item_from(
     )
 
 
-def flyer_items_table_row(fi: FlyerItem, confidence: float = 0.95) -> dict:
-    """The literal realdeal.core.flyer_items row shape: FlyerItem plus confidence/match_text, which the real
-    table has (from the ai_query pipeline output) but the frozen FlyerItem Pydantic model doesn't carry.
-    JSON-serializable (week_start as an ISO string) for both the sidecar file and SQL array parameters.
-    """
-    row = fi.model_dump(mode="json")
-    row["confidence"] = confidence
-    row["match_text"] = " ".join(p for p in (fi.brand, fi.item, fi.variant,
-                                              f"{fi.size_qty:g}{fi.size_unit}" if fi.size_qty and fi.size_unit else "")
-                                 if p)
-    return row
-
-
 def _needs_detail(extracted: ExtractedItem | None, item: dict) -> bool:
     """Whether to spend an extra /items/{id} call: only when the list alone couldn't give a price or a size."""
     if extracted is None:
@@ -221,6 +187,6 @@ def fetch_grocery_flyer(merchant: str, store_key: str, postal: str = DEFAULT_POS
             extracted, item_id=f"flipp-{it['id']}", page_id=page_id, store=store_name,
             week_start=week, raw_text=extracted.item,
         )
-        rows.append(flyer_items_table_row(fi))
+        rows.append(fi.model_dump(mode="json"))
 
     return {"week": week, "pages": [], "rows": rows, "item_count": len(raw_items), "sized_count": sized}
