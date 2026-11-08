@@ -249,3 +249,8 @@ export function FieldRow({
 }
 
 export const money = (n?: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
+
+/** Pulsing placeholder block for skeleton loading states. Pass sizing/shape via className. */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div aria-hidden className={`animate-pulse rounded-[8px] bg-label-2/15 motion-reduce:animate-none ${className}`} />;
+}

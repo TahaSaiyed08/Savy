@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { EmptyState, InsetGroup, LargeTitle, RetryButton, Status } from "@/components/ui";
+import { EmptyState, InsetGroup, LargeTitle, RetryButton, Skeleton, Status } from "@/components/ui";
 import { Plus, ReceiptText } from "@/components/icons";
 import { AddMethodsSheet, type AddMethod } from "@/components/list/AddMethodsSheet";
 import { IntakeError, ReceiptLoading } from "@/components/list/ReceiptLoading";
@@ -28,6 +28,24 @@ type PendingSave = {
   source: Schemas["SaveItems"]["source"];
   boughtAt?: string | null;
 };
+
+function ListSkeleton() {
+  return (
+    <section className="mx-4 mb-6">
+      <Skeleton className="mb-1.5 ml-4 h-3 w-20" />
+      <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
+        {[0, 1, 2, 3].map((i) => (
+          <li key={i} className="flex min-h-[4.625rem] items-center gap-2 border-b border-separator px-4 py-3 last:border-b-0">
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <Skeleton className="h-[17px] w-2/3" />
+              <Skeleton className="h-[15px] w-1/3" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 export default function MyList() {
   const { items, loading, error, deleteError, addItems, deleteItem, refetch } = useItems();
@@ -165,7 +183,15 @@ export default function MyList() {
         }
       />
 
-      <Status loading={loading} error={error} />
+      {loading && (
+        <>
+          <p role="status" className="sr-only">
+            Loading…
+          </p>
+          <ListSkeleton />
+        </>
+      )}
+      <Status error={error} />
       {error && <RetryButton onRetry={refetch} />}
       {deleteError && <p className="px-8 pb-4 text-center text-[13px] text-destructive">{deleteError}</p>}
 
