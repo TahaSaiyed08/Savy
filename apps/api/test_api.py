@@ -347,6 +347,25 @@ def test_receipt_intake_saves_in_background(monkeypatch):
     assert r.status_code == 200 and saved == [(uuid.UUID(H["X-User-Id"]), b"\xff\xd8\xffx", "Save-On-Foods")]
 
 
+def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
+    from apps.api import databricks_sql
+
+    up = {"ok": True}
+
+    def run(sql, params):
+        if not up["ok"]:
+            raise RuntimeError("warehouse down")
+        return [{"n": 1}]
+
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]
+    up["ok"] = False
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]  # screens still get the last good result
+    with pytest.raises(RuntimeError):
+        databricks_sql.query("SELECT 1", fallback=False)
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):
