@@ -64,7 +64,7 @@ Owner: primenumberhater666
 
 1. Run `make dev`; read `/docs` at http://localhost:8000/docs. All routes already return mock data.
 2. Set `ANTHROPIC_API_KEY`; test `ClaudeExtractor` on a real receipt (`/intake/receipt`). Tune
-   `shared/prompts/receipt.v1.md` (copy to `v2`, bump `PROMPT_VERSION`) until the demo receipt parses cleanly.
+   `shared/prompts/receipt.v1.md` (copy to `v2`, add it to `PROMPT_VERSIONS` in `shared/__init__.py`) until the demo receipt parses cleanly.
 3. Once WS1 has tables, set the Databricks env vars and `REALDEAL_MOCK=0`. Exercise `store.py`'s real paths:
    `list_items`, `add_items` (insert + AI Search match + `LIKE` fallback), `list_deals`.
 4. Write receipts to `receipts` and the image to `/Volumes/realdeal/core/uploads/` on `/intake/receipt`.
