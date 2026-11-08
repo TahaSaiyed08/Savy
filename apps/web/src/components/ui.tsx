@@ -1,7 +1,7 @@
 // HIG building blocks. Component list (frozen interface with Design): LargeTitle, InsetGroup, Row, Status,
 // TabBar, plus the sheet-era additions below (EmptyState, Chip, PrimaryButton, FieldRow, UnitPicker). Design
 // changes the look via tokens in globals.css; Frontend keeps these props stable.
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Loader } from "@/components/icons";
 
 export function LargeTitle({ title, action }: { title: string; action?: ReactNode }) {
@@ -66,7 +66,12 @@ export function Row({
 
 export function Status({ loading, error, empty }: { loading?: boolean; error?: string; empty?: string }) {
   const text = loading ? "Loading…" : error ?? empty;
-  return text ? <p className="px-8 py-12 text-center text-label-2">{text}</p> : null;
+  // role="status" so screen readers announce the Loading -> error/empty transition on its own.
+  return text ? (
+    <p role="status" className="px-8 py-12 text-center text-label-2">
+      {text}
+    </p>
+  ) : null;
 }
 
 /** Pairs with `Status`'s `error` text when the caller has a `refetch`/`retry` to offer — kept separate so
@@ -216,15 +221,23 @@ export function FieldRow({
   onChange?: (v: string) => void;
   placeholder?: string;
 }) {
+  const id = useId();
   return (
     <div className="flex min-h-[52px] items-center gap-4 border-b border-separator/60 px-4 py-3 last:border-b-0">
-      <p className="w-[85px] shrink-0 text-[17px] font-medium text-label-2">{label}</p>
+      {onChange ? (
+        <label htmlFor={id} className="w-[85px] shrink-0 text-[17px] font-medium text-label-2">
+          {label}
+        </label>
+      ) : (
+        <p className="w-[85px] shrink-0 text-[17px] font-medium text-label-2">{label}</p>
+      )}
       {onChange ? (
         <input
+          id={id}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="min-w-0 flex-1 bg-transparent text-[17px] text-label outline-none placeholder:text-label-2"
+          className="min-w-0 flex-1 rounded bg-transparent text-[17px] text-label outline-none placeholder:text-label-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
         />
       ) : (
         <p className="min-w-0 flex-1 truncate text-[17px]">{value || <span className="text-label-2">{placeholder}</span>}</p>
