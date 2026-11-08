@@ -23,6 +23,8 @@ from shared import flipp
 
 log = logging.getLogger(__name__)
 
+# Timing knobs. A flyer is replaced weekly, but Flipp also fixes prices in place, so everything is re-downloaded
+# once the copy is a day old; between those, an hourly look at Flipp's flyer list catches a store's new flyer.
 ENABLED = os.getenv("REALDEAL_LIVE_FLYERS", "1") != "0"  # "0": canned flyers only (tests, CI, no network)
 DATA = Path(__file__).parent / "data"
 DEFAULT_POSTAL = os.getenv("DEFAULT_POSTAL_CODE", flipp.DEFAULT_POSTAL).replace(" ", "").upper()
@@ -30,6 +32,7 @@ LEGACY_SNAPSHOT = DATA / "flipp_snapshot.json"  # what `make flipp-snapshot` wro
 STALE_AFTER = timedelta(hours=24)
 RETRY_AFTER = timedelta(minutes=10)  # a stale copy that can't be refreshed must not hit Flipp on every request
 CHECK_EVERY = 3600.0  # seconds between looks at Flipp's flyer list
+# Canadian postal codes alternate letter/digit: A1A1A1. Flipp's API wants them without the space.
 _POSTAL = re.compile(r"^[A-Z]\d[A-Z]\d[A-Z]\d$")
 
 
@@ -39,16 +42,17 @@ def normalize(raw: str | None) -> str | None:
     return code if _POSTAL.match(code) else None
 
 
+# One Feed per postal code, held in memory and mirrored to apps/api/data/flipp_<POSTAL>.json so a restart is instant.
 @dataclass
 class Feed:
     postal: str
     rows: list[FlyerItem] = field(default_factory=list)
     flyers: dict[str, int] = field(default_factory=dict)  # store -> id of the Flipp flyer the rows came from
     fetched_at: datetime | None = None
-    refreshing: bool = False
-    tried_at: datetime | None = None
+    refreshing: bool = False  # a download is running, so don't start a second one
+    tried_at: datetime | None = None  # last attempt, successful or not: spaces out retries after a failure
     error: str | None = None
-    pages: dict[str, list[FlyerItem]] = field(default_factory=dict)
+    pages: dict[str, list[FlyerItem]] = field(default_factory=dict)  # page_id -> its tiles, an index for page lookups
     meta: dict[int, dict] = field(default_factory=dict)  # Flipp flyer id -> where its page images are
 
     def load(self, rows: list[FlyerItem], flyers: dict[str, int], fetched_at: datetime,
@@ -60,6 +64,8 @@ class Feed:
         self.meta = meta if meta is not None else self.meta
 
 
+# All feeds, keyed by postal code. The lock guards the dict (and the `refreshing` flag), never a download: holding it
+# across the network would block every request.
 _feeds: dict[str, Feed] = {}
 _lock = threading.Lock()
 
@@ -74,12 +80,15 @@ def _flyer_ids(rows: list[FlyerItem]) -> dict[str, int]:
 
 
 def _read(postal: str) -> Feed:
+    # Reads the saved copy of one feed. Anything wrong with it (missing, corrupt, old format) returns an empty feed that
+    # simply downloads again, so a bad file can never take the API down.
     feed = Feed(postal)
     path = _path(postal) if _path(postal).exists() else (LEGACY_SNAPSHOT if postal == DEFAULT_POSTAL else None)
     if path is None or not path.exists():
         return feed
     try:
         data = json.loads(path.read_text())
+        # One unreadable row is skipped, not fatal: rows are validated on the way in (see FlyerItem's validators).
         rows, bad = [], 0
         for r in data["rows"]:
             try:
@@ -90,6 +99,8 @@ def _read(postal: str) -> Feed:
             log.warning("skipped %d unreadable rows in %s", bad, path)
         saved = data.get("fetched_at")  # the legacy snapshot has none: use the file's age
         fetched = datetime.fromisoformat(saved) if saved else datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        # A copy made by an older parser is still shown right away, but marked as stale so it is rebuilt in the
+        # background with the improved parsing.
         if data.get("parser") != flipp.PARSER_VERSION:  # still served, but counts as stale: downloaded again behind it
             fetched = datetime.min.replace(tzinfo=UTC)
         meta = {int(k): v for k, v in data.get("meta", {}).items()}
@@ -100,6 +111,7 @@ def _read(postal: str) -> Feed:
 
 
 def _save(feed: Feed) -> None:
+    # Everything needed to restart without the network: rows, which flyer each store is on, and where page images live.
     DATA.mkdir(parents=True, exist_ok=True)
     fetched = feed.fetched_at.isoformat() if feed.fetched_at else None
     body = {"postal": feed.postal, "parser": flipp.PARSER_VERSION, "fetched_at": fetched, "flyers": feed.flyers,
