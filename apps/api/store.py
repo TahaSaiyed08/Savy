@@ -88,7 +88,10 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
             ":size_unit, :source, :added_at, :last_bought_at)",
             **{**u.model_dump(), "user_id": str(u.user_id)},
         )
-        _match_and_store(u)
+        try:
+            _match_and_store(u)
+        except Exception:  # the item is saved; it shows "no deal" until the weekly re-match
+            log.warning("matching failed for %s; saved without matches", u.user_item_id, exc_info=True)
     return new
 
 

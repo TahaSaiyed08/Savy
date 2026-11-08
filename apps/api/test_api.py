@@ -77,6 +77,23 @@ def test_heic_is_rejected_before_any_paid_call():
     assert e.value.status_code == 415 and not calls
 
 
+def test_save_survives_matching_failure(monkeypatch):
+    from apps.api import databricks_sql, store
+    from apps.api.models import SaveItems
+
+    writes = []
+
+    def down(*a, **kw):
+        raise RuntimeError("index and flyer_items unavailable")
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(sql))
+    monkeypatch.setattr(databricks_sql, "query", down)
+    monkeypatch.setattr(databricks_sql, "_client", down)
+    saved = store.add_items(uuid.uuid4(), SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
+    assert len(saved) == 1 and any("INSERT INTO user_items" in s for s in writes)
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):
