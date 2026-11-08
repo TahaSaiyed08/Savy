@@ -39,8 +39,10 @@ export function ListRow({ item, onDelete }: { item: Schemas["UserItem"]; onDelet
           setDx(0);
           onDelete();
         }}
+        onFocus={() => setDx(OPEN)}
+        onBlur={() => setDx(0)}
         aria-label={`Delete ${title}`}
-        className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center bg-destructive text-[17px] text-white"
+        className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center bg-destructive text-[17px] text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white"
       >
         Delete
       </button>
