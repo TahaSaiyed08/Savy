@@ -46,7 +46,7 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
 
 
 def _match_and_store(items: list[UserItem]) -> None:
-    """Top-3 per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
+    """Top-3 per store per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
 
     Matches land in user_item_matches, which my_deals reads.
     """
@@ -54,6 +54,9 @@ def _match_and_store(items: list[UserItem]) -> None:
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         found = dict(zip((u.user_item_id for u in items), pool.map(_search, items), strict=True))
+    if any(found.values()):  # the index holds every week, so keep only current-flyer hits
+        current = _current_flyers()
+        found = {k: None if v is None else _current_top(v, current) for k, v in found.items()}
     missed = [u for u in items if found[u.user_item_id] is None]
     if missed:
         found.update(_like_fallback(missed))
@@ -132,18 +135,42 @@ def rematch_if_new_week() -> int:
 
 
 def _search(u: UserItem) -> list[tuple] | None:
-    """AI Search top-3 as (item_id, brand, score), or None if the index is unavailable."""
+    """AI Search candidates as (item_id, brand, score) across all weeks, or None if the index is unavailable."""
     from apps.api import databricks_sql as db
 
     try:
         r = db._client().vector_search_indexes.query_index(
             index_name=INDEX, columns=["item_id", "brand", "item", "variant"],
-            query_text=logic.label(u), num_results=3,
+            query_text=logic.label(u), num_results=SEARCH_CANDIDATES,
         )
     except Exception as e:
         log.warning("AI Search unavailable, falling back to LIKE: %s", e)
         return None
-    return [(row[0], row[1], row[-1]) for row in (r.result.data_array or [])]  # score is last
+    return [(row[0], row[1], row[-1]) for row in (r.result.data_array or [])]  # score is last, best first
+
+
+# The index covers every week and can't filter on week_start, so over-fetch and keep current-flyer rows.
+SEARCH_CANDIDATES = 50
+TOP_PER_STORE = 3
+
+
+def _current_flyers() -> dict[str, str]:
+    """item_id -> store for every item in each store's current flyer."""
+    from apps.api import databricks_sql as db
+
+    return {r["item_id"]: r["store"] for r in db.query(f"SELECT item_id, store FROM {_CURRENT_FLYERS} f")}
+
+
+def _current_top(hits: list[tuple], current: dict[str, str]) -> list[tuple]:
+    """Drop hits from past weeks, then keep the best TOP_PER_STORE per store (hits arrive best first)."""
+    kept: list[tuple] = []
+    per_store: dict[str, int] = {}
+    for hit in hits:
+        store = current.get(hit[0])
+        if store is not None and per_store.get(store, 0) < TOP_PER_STORE:
+            per_store[store] = per_store.get(store, 0) + 1
+            kept.append(hit)
+    return kept
 
 
 def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:

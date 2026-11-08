@@ -266,6 +266,35 @@ def test_weekly_rematch_sweeps_each_new_week_once(monkeypatch):
     assert len(item_reads) == 3
 
 
+def test_search_keeps_only_current_flyers_top_three_per_store(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    hits = [["old1", None, 0.99], ["old2", None, 0.98], ["old3", None, 0.97]]  # last week's rows rank first
+    hits += [[f"sof{n}", None, 0.9 - n / 100] for n in range(5)] + [["ss1", None, 0.8]]
+    index = SimpleNamespace(query_index=lambda **kw: SimpleNamespace(result=SimpleNamespace(data_array=hits)))
+    current = [{"item_id": f"sof{n}", "store": "Save-On-Foods"} for n in range(5)]
+    current += [{"item_id": "ss1", "store": "Superstore"}]
+    writes, reads = [], []
+
+    def query(sql, **p):
+        reads.append(sql)
+        assert "inline" not in sql, "the LIKE fallback must not run when the index answered"
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(vector_search_indexes=index))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id="u1", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC))])
+
+    saved = [m["flyer_item_id"] for m in json.loads(writes[0]["rows"])]
+    assert saved == ["sof0", "sof1", "sof2", "ss1"] and len(reads) == 1
+
+
 def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):
     from apps.api import store
 
