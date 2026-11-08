@@ -8,6 +8,7 @@ from typing import Annotated
 from uuid import UUID
 
 import anthropic
+import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 
 from apps.api import logic, store, stt
@@ -124,7 +125,12 @@ def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeRespon
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
-    text = stt.transcribe(_read(file, "audio/"), file.filename or "audio.webm", file.content_type)
+    try:
+        text = stt.transcribe(_read(file, "audio/"), file.filename or "audio.webm", file.content_type)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, "Speech service error; try again or type the item") from e
+    if not text.strip():  # silence: don't pay for an extraction that can only invent an item
+        raise HTTPException(422, "Didn't catch that; try again")
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 

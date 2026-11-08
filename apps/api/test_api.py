@@ -276,6 +276,33 @@ def test_voice_uses_mock_transcript():
     assert r["transcript"] and r["extraction"]["items"][0]["size_unit"] == "ml"
 
 
+def _voice():
+    return c.post("/intake/voice", headers=H, files={"file": ("a.webm", io.BytesIO(b"x"), "audio/webm")})
+
+
+def test_speech_service_failure_is_a_502(monkeypatch):
+    from apps.api import stt
+
+    def down(*a):
+        raise httpx.ConnectError("ElevenLabs unreachable")
+
+    monkeypatch.setattr(stt, "transcribe", down)
+    r = _voice()
+    assert r.status_code == 502 and "Speech service" in r.json()["detail"]
+
+
+def test_silent_recording_skips_extraction(monkeypatch):
+    from apps.api import stt
+
+    monkeypatch.setattr(stt, "transcribe", lambda *a: "  ")
+    app.dependency_overrides[get_extractor] = lambda: _Failing(AssertionError("extractor must not be called"))
+    try:
+        r = _voice()
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 422 and "catch" in r.json()["detail"]
+
+
 def _user(**kw):
     base = dict(user_item_id="u1", user_id=uuid.uuid4(), source="manual", added_at="2026-11-07T00:00:00Z")
     return logic.UserItem(**{**base, **kw})
