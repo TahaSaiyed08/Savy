@@ -120,6 +120,8 @@ async def ask_limit(request: Request) -> None:
     q.append(now)
 
 
+# There are no accounts. The phone makes a random UUID once and sends it as X-User-Id, and that id scopes every item.
+# The postal code travels the same way, as a header, so it never appears in a URL or a log line.
 UserId = Annotated[UUID, Header(alias="X-User-Id", description="UUID generated on the device")]
 
 
@@ -133,11 +135,13 @@ def postal_code(
 
 
 Postal = Annotated[str, Depends(postal_code)]
+# The fields that say *what* an item is. Editing any of them can make a flyer-added item stop being a real listing.
 _IDENTITY = {"brand", "item", "variant", "size_qty", "size_unit"}
 Ext = Annotated[Extractor, Depends(get_extractor)]
 
 
 def _read(upload: UploadFile, kind: str) -> bytes:
+    # Reads one byte past the limit so an oversize file is detected without loading all of it into memory.
     if not (upload.content_type or "").startswith(kind):
         raise HTTPException(415, f"expected {kind}* upload")
     data = upload.file.read(MAX_UPLOAD + 1)
@@ -172,6 +176,8 @@ def health() -> dict:
     return {"ok": True, "mock": store.MOCK, "extractor": type(get_extractor()).__name__}
 
 
+# Intake endpoints: each turns a photo, voice note or typed line into candidate items, and none of them saves anything.
+# The app shows the result for confirmation, then calls POST /items.
 @app.post("/intake/receipt", dependencies=[Depends(rate_limit)])
 def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext, background: BackgroundTasks) -> IntakeResponse:
     image = _read(file, "image/")
@@ -192,6 +198,7 @@ def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeRespon
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
+    # Voice is two paid calls in a row: speech-to-text, then the same text extractor as typing.
     audio = _read(file, "audio/")
     try:
         text = stt.transcribe(audio, file.filename or "audio.webm", file.content_type)
@@ -204,6 +211,7 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
+# Flyers are optional data for the list screens: if they can't be loaded, the person's own items must still work.
 def _flyers_or_none(postal: str) -> list[FlyerItem]:
     try:
         return store.flyer_items(postal)
