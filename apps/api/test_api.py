@@ -816,6 +816,13 @@ def test_listings_link_to_the_store_and_never_to_the_flyer_source():
     assert not any("flipp.com" in str(v) for v in [*got.values(), *deal.values()])
 
 
+def test_a_store_page_that_is_really_an_ad_tracker_is_never_a_link():
+    # Food Basics tiles carry ad.doubleclick.net click-trackers as their "store page"; an older parser saved them
+    tracked = _flyer(store_url="https://ad.doubleclick.net/ddm/trackclk/N1;dc_trk_aid=5")
+    assert tracked.store_url is None and logic.listing(tracked).store_url is None
+    assert _flyer(store_url="https://www.flipp.com/en-ca/item/1").store_url is None
+
+
 def test_client_cannot_claim_flyer_source_for_something_no_flyer_lists():
     h = {"X-User-Id": str(uuid.uuid4())}
     body = {"source": "flyer", "items": [{"item": "milk", "confidence": 1}]}

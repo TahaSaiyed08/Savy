@@ -203,6 +203,18 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
       <div className="flex items-center gap-3">
         <Thumb src={listing.imageUrl} />
         <p className="min-w-0 flex-1 truncate text-[17px] font-semibold">{listing.store}</p>
+        {listing.storeUrl && ( // the store's own page for the product; never Flipp's
+          <a
+            href={listing.storeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-tap shrink-0 items-center gap-1 text-[15px] font-semibold text-tint"
+          >
+            Original flyer
+            <ExternalLink size={15} />
+            <span className="sr-only">(opens {listing.store}&apos;s site in a new tab)</span>
+          </a>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <PriceTag price={listing.price} regular={listing.regularPrice} large />
@@ -216,17 +228,6 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
         </p>
       )}
       {extra && <p className="truncate text-[13px] text-label-2">{extra}</p>}
-      {listing.storeUrl && (
-        <a
-          href={listing.storeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex min-h-tap items-center gap-1 text-[15px] text-tint"
-        >
-          View on {listing.store}&apos;s site
-          <ExternalLink size={14} />
-        </a>
-      )}
     </div>
   );
 }

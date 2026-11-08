@@ -88,7 +88,23 @@ test("price match: links to the store's own page, and nothing links to the flyer
   await page.locator("li button").first().click();
 
   const screen = page.getByRole("heading", { name: "Price match" }).locator("../..");
-  await expect(screen.getByRole("link", { name: /View on .*'s site/ })).toHaveAttribute("href", "https://www.nofrills.ca/p/20921434001_EA");
+  const original = screen.getByRole("link", { name: /Original flyer/ });
+  await expect(original).toHaveAttribute("href", "https://www.nofrills.ca/p/20921434001_EA");
+  await expect(original).toHaveAttribute("target", "_blank");
+  await expect(original).toHaveAttribute("rel", /noopener/);
+  await expect(page.locator('a[href*="flipp"]')).toHaveCount(0);
+});
+
+test("price match: no Original flyer link when the store has no page for the item", async ({ page }) => {
+  await page.route("**/api/flyer-items**", async (route) => {
+    const body = await (await route.fetch()).json();
+    for (const g of body.items) Object.assign(g.cheapest, { store_url: null });
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/flyers");
+  await page.locator("li button").first().click();
+  await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Original flyer/ })).toHaveCount(0);
   await expect(page.locator('a[href*="flipp"]')).toHaveCount(0);
 });
 

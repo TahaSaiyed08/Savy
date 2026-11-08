@@ -213,6 +213,9 @@ def test_the_size_printed_once_after_two_products_belongs_to_the_first():
     ("http://insecure.example/p/1", None),
     ("javascript:alert(1)", None),
     ("//evil.example/p/1", None),
+    ("https://ad.doubleclick.net/ddm/trackclk/N1;dc_trk_aid=5", None),  # an ad tracker is not the store's page
+    ("https://www.flipp.com/en-ca/item/1", None),
+    ("https://notflipp.com/p/1", "https://notflipp.com/p/1"),
     ("", None),
     (None, None),
 ])
