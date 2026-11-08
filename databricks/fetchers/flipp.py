@@ -5,6 +5,9 @@ image of the tile. The pipeline only asks ai_query to split the printed text int
 
 Usage: uv run --env-file .env python databricks/fetchers/flipp.py [store ...] [--limit N] [--dry-run DIR]
        (no stores = all five; --dry-run writes the .jsonl files to DIR instead of the Volume)
+
+Auto Loader skips a file it has already read, so re-fetching the same week (same path) needs
+`databricks bundle run realdeal_flyers --full-refresh flipp_items,flipp_extractions,flyer_items`.
 """
 import argparse
 import json
@@ -75,9 +78,12 @@ def rows(slug: str, flyer: dict, limit: int | None = None) -> list[dict]:
         bbox = [(i["left"] - page["left"]) / w, (page["top"] - i["top"]) / h,
                 (i["right"] - page["left"]) / w, (page["top"] - i["bottom"]) / h]
         price = _price(d.get("current_price"), i.get("price"))
-        if price and (m := _MULTI.match(d.get("pre_price_text") or "")) and int(m[1]) > 1:
+        m = _MULTI.match(d.get("pre_price_text") or "")
+        multi = bool(m) and int(m[1]) > 1
+        if price and multi:
             price = round(price / int(m[1]), 2)
-        text = [i.get("brand"), i.get("name"), d.get("description"), d.get("pre_price_text"),
+        # The per-unit price replaces "2/ $7.50" in the text, else ai_query reads "2/" as a 2-pack and doubles the size.
+        text = [i.get("brand"), i.get("name"), d.get("description"), None if multi else d.get("pre_price_text"),
                 f"${price}" if price else None, d.get("price_text")]
         out.append({
             "flipp_id": str(i["id"]), "store": slug, "week_start": week,
