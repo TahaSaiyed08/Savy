@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-// Plan.md WS3 step 9: open the PWA, add an item manually, see it in Deals. Runs in mock mode.
-test("add an item manually and see it matched in Deals", async ({ page }) => {
+// Plan.md WS3 step 9: open the PWA, add an item manually, see it matched in Add item(s). Runs in mock mode.
+test("add an item manually and see it matched in Add item(s)", async ({ page }) => {
   await page.goto("/list");
 
   await page.getByRole("button", { name: "Add item" }).click();
@@ -16,6 +16,6 @@ test("add an item manually and see it matched in Deals", async ({ page }) => {
 
   await expect(page.getByText("olive oil", { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("link", { name: "Deals" }).click();
+  await page.getByRole("link", { name: "Add item(s)" }).click();
   await expect(page.getByText(/olive oil/i).first()).toBeVisible();
 });

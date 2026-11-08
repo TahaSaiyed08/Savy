@@ -1,6 +1,6 @@
 "use client";
 // Developer-only state gallery — not linked from the app's tab bar. Reaches every one of the 18 designed
-// states for review. Most states are the REAL app driven with real (mock-mode) data: My List/Deals/Basket
+// states for review. Most states are the REAL app driven with real (mock-mode) data: Pantry/Add item(s)/Basket
 // populated, the add-methods sheet, the full receipt and photo intake flows (any picked file works —
 // MockExtractor returns a fixed extraction regardless of image content), and typed "type or say it" (hits
 // the real /intake/manual). Two states are device-gated and get a static preview instead: "recording"
@@ -155,16 +155,16 @@ export default function DevStates() {
         <DevButton label="Parsed" note="Screen 10 — type anything in Idle and press Enter" onClick={() => setSheet("type-idle")} />
       </Section>
 
-      <Section title="Deals">
+      <Section title="Add item(s)">
         <DevButton href="/deals" label="Populated" note="Screen 11" />
         <DevButton label="Milk deal detail" note="Screen 12 — uses your real cheapest deal" onClick={() => setSheet("deal-detail")} />
-        <DevButton label="Empty" note="Screen 13 — see My List → Empty above" onClick={clearList} />
+        <DevButton label="Empty" note="Screen 13 — see Pantry → Empty above" onClick={clearList} />
         <DevButton href="/deals" label="Dark" note="Screen 17 — set theme to Dark above, then open" />
       </Section>
 
       <Section title="Basket">
         <DevButton href="/basket" label="Populated" note="Screen 14" />
-        <DevButton label="Empty" note="Screen 15 — see My List → Empty above" onClick={clearList} />
+        <DevButton label="Empty" note="Screen 15 — see Pantry → Empty above" onClick={clearList} />
         <DevButton href="/basket" label="Dark" note="Screen 18 — set theme to Dark above, then open" />
       </Section>
 
