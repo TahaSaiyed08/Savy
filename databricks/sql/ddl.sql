@@ -32,8 +32,14 @@ CREATE TABLE IF NOT EXISTS user_items (
   size_unit      STRING,
   source         STRING    NOT NULL COMMENT 'receipt | photo | manual | voice',
   added_at       TIMESTAMP NOT NULL,
-  last_bought_at TIMESTAMP
+  last_bought_at TIMESTAMP,
+  in_basket      BOOLEAN COMMENT 'Pantry is every item ever added; Basket is the ones moved here to get now'
 );
+-- Additive, so a catalog created before this column existed still works: ALTER instead of relying on
+-- CREATE TABLE IF NOT EXISTS, which skips entirely once the table already exists. Re-running this against
+-- a catalog that already has the column fails (Databricks has no ADD COLUMN IF NOT EXISTS); drop the line
+-- once every catalog has it.
+ALTER TABLE user_items ADD COLUMNS (in_basket BOOLEAN COMMENT 'Pantry vs Basket');
 
 CREATE TABLE IF NOT EXISTS receipts (
   receipt_id STRING NOT NULL,

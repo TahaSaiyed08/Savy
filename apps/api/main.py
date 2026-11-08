@@ -1,9 +1,11 @@
 """Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
+import asyncio
 import ipaddress
+import logging
 import os
 import time
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 from uuid import UUID
 
@@ -12,13 +14,43 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
-from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, Mode, SaveItems, UserItem
+from apps.api.models import (
+    Basket,
+    Deal,
+    ExtractedItem,
+    Extraction,
+    IntakeResponse,
+    ManualIntake,
+    Mode,
+    SaveItems,
+    SetBasket,
+    UserItem,
+)
+
+log = logging.getLogger(__name__)
+
+
+REMATCH_EVERY = float(os.getenv("REMATCH_EVERY_SECONDS", "300"))  # 0 turns the weekly re-match poll off
+
+
+async def _rematch_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(store.rematch_if_new_week)
+        except Exception:
+            log.warning("weekly re-match failed; retrying in %.0f s", REMATCH_EVERY, exc_info=True)
+        await asyncio.sleep(REMATCH_EVERY)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    task = asyncio.create_task(_rematch_loop()) if REMATCH_EVERY > 0 and not store.MOCK else None
     yield
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
@@ -124,7 +156,15 @@ def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeRespon
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
-    text = stt.transcribe(_read(file, "audio/"), file.filename or "audio.webm", file.content_type)
+    audio = _read(file, "audio/")
+    try:
+        text = stt.transcribe(audio, file.filename or "audio.webm", file.content_type)
+    except stt.SpeechServiceError as e:
+        log.warning("speech-to-text failed for user %s (%s, %d bytes): %s",
+                    user_id, file.content_type, len(audio), e, exc_info=True)
+        raise HTTPException(502, "Speech service error; try again or type the item") from e
+    if not text.strip():  # silence: don't pay for an extraction that can only invent an item
+        raise HTTPException(422, "Didn't catch that; try again")
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
@@ -144,6 +184,24 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
     store.delete_item(user_id, user_item_id)
 
 
+@app.patch("/items/{user_item_id}")
+def edit_item(user_id: UserId, user_item_id: str, body: ExtractedItem) -> UserItem:
+    """Edits a Pantry item's identity (brand/item/variant/size)."""
+    updated = store.update_item(user_id, user_item_id, body)
+    if not updated:
+        raise HTTPException(404, "item not found")
+    return updated
+
+
+@app.post("/items/{user_item_id}/basket")
+def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket) -> UserItem:
+    """Moves an item into (or out of) the Basket -- the subset of the Pantry you're getting right now."""
+    updated = store.set_basket(user_id, user_item_id, body.in_basket)
+    if not updated:
+        raise HTTPException(404, "item not found")
+    return updated
+
+
 @app.get("/deals")
 def get_deals(user_id: UserId) -> list[Deal]:
     return store.list_deals(user_id)
@@ -151,4 +209,8 @@ def get_deals(user_id: UserId) -> list[Deal]:
 
 @app.get("/basket")
 def get_basket(user_id: UserId) -> Basket:
-    return logic.basket(store.list_items(user_id), store.list_deals(user_id))
+    """The store/split-shop comparison, scoped to only the items moved into the Basket."""
+    basket_items = [i for i in store.list_items(user_id) if i.in_basket]
+    basket_ids = {i.user_item_id for i in basket_items}
+    deals = [d for d in store.list_deals(user_id) if d.user_item_id in basket_ids]
+    return logic.basket(basket_items, deals)

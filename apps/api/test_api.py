@@ -63,6 +63,63 @@ def test_delete_cannot_remove_another_users_item():
     assert target in {i["user_item_id"] for i in after}
 
 
+def test_new_items_default_out_of_basket():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    saved = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                               "source": "manual"}).json()
+    assert saved[0]["in_basket"] is False
+
+
+def test_set_basket_moves_item_in_and_out():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    target = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                                "source": "manual"}).json()[0]["user_item_id"]
+
+    r = c.post(f"/items/{target}/basket", headers=h, json={"in_basket": True})
+    assert r.status_code == 200 and r.json()["in_basket"] is True
+    assert c.get("/items", headers=h).json()[0]["in_basket"] is True  # still in Pantry, now flagged
+
+    r = c.post(f"/items/{target}/basket", headers=h, json={"in_basket": False})
+    assert r.status_code == 200 and r.json()["in_basket"] is False
+
+
+def test_set_basket_404_for_unknown_item():
+    assert c.post("/items/does-not-exist/basket", headers=H, json={"in_basket": True}).status_code == 404
+
+
+def test_basket_only_includes_items_moved_into_it():
+    h = {"X-User-Id": str(uuid.uuid4())}  # fresh user: 5 seeded items, all in_basket=True
+    before = c.get("/basket", headers=h).json()
+    assert before["cheapest_store"]
+
+    target = c.get("/items", headers=h).json()[0]["user_item_id"]
+    c.post(f"/items/{target}/basket", headers=h, json={"in_basket": False})
+
+    after = c.get("/basket", headers=h).json()
+    assert after["split_total"] <= before["split_total"]  # one fewer item to price in
+
+
+def test_edit_item_changes_its_fields():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    target = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                                "source": "manual"}).json()[0]["user_item_id"]
+
+    r = c.patch(f"/items/{target}", headers=h,
+                json={"brand": "Lucerne", "item": "milk", "variant": "1%", "size_qty": 2, "size_unit": "l",
+                      "confidence": 1})
+    assert r.status_code == 200
+    updated = r.json()
+    assert (updated["brand"], updated["variant"], updated["size_qty"]) == ("Lucerne", "1%", 2)
+
+    refetched = next(i for i in c.get("/items", headers=h).json() if i["user_item_id"] == target)
+    assert refetched["brand"] == "Lucerne"
+
+
+def test_edit_item_404_for_unknown_item():
+    body = {"item": "milk", "confidence": 1}
+    assert c.patch("/items/does-not-exist", headers=H, json=body).status_code == 404
+
+
 def test_rejects_non_image_receipt():
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.txt", io.BytesIO(b"x"), "text/plain")})
     assert r.status_code == 415
@@ -139,7 +196,7 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
     def no_index():
         raise RuntimeError("no AI Search index")
 
-    def like(sql, rows):
+    def like(sql, rows, fresh=False):
         reads.append(sql)
         return [{"user_item_id": r["user_item_id"], "item_id": f"f-{r['item']}", "brand": "Purex"}
                 for r in json.loads(rows)]
@@ -265,7 +322,175 @@ def test_failed_matching_is_retried_on_next_deals(monkeypatch):
     store.list_deals(uid)
     inserted = [json.loads(p["rows"]) for s, p in writes if "user_item_matches" in s]
     assert inserted == [[{"user_item_id": saved[0].user_item_id, "flyer_item_id": "f1", "match_score": 0.75}]]
-    assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
+    assert uid not in store._unmatched and "MERGE INTO user_item_matches" in next(
+        s for s, _ in writes if "user_item_matches" in s)
+
+
+def test_weekly_rematch_sweeps_each_flyer_change_once(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"sig": "Save-On-Foods=2026-11-05:276:-347", "fail": False}
+    batches, item_reads = [], []
+    items = [{"user_item_id": f"u{n}", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+              "added_at": datetime.now(UTC)} for n in range(250)]
+
+    def query(sql, **p):
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        item_reads.append(state["sig"])
+        return items
+
+    def match(batch):
+        if state["fail"]:
+            raise RuntimeError("warehouse down")
+        batches.append(len(batch))
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_flyers", None)
+    monkeypatch.setattr(store, "_match_and_store", match)
+    monkeypatch.setattr(databricks_sql, "query", query)
+
+    assert store.rematch_if_new_week() == 250 and batches == [100, 100, 50]
+    assert store.rematch_if_new_week() == 0 and len(item_reads) == 1  # unchanged flyers: no item scan
+
+    state["sig"] = "Save-On-Foods=2026-11-05:290:812"  # same week, later pages arrived
+    assert store.rematch_if_new_week() == 250 and len(item_reads) == 2
+
+    state.update(sig="PriceSmart=2026-11-07:40:5,Save-On-Foods=2026-11-05:290:812", fail=True)  # new store flyer
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()
+    state["fail"] = False
+    assert store.rematch_if_new_week() == 250  # the failed sweep is retried, not marked done
+    assert len(item_reads) == 4
+
+
+def test_search_keeps_only_current_flyers_top_three_per_store(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    hits = [["old1", None, 0.99], ["old2", None, 0.98], ["old3", None, 0.97]]  # last week's rows rank first
+    hits += [[f"sof{n}", None, 0.9 - n / 100] for n in range(5)] + [["ss1", None, 0.8]]
+    index = SimpleNamespace(query_index=lambda **kw: SimpleNamespace(result=SimpleNamespace(data_array=hits)))
+    current = [{"item_id": f"sof{n}", "store": "Save-On-Foods"} for n in range(5)]
+    current += [{"item_id": "ss1", "store": "Superstore"}]
+    writes, reads = [], []
+
+    def query(sql, **p):
+        reads.append(sql)
+        assert "inline" not in sql, "the LIKE fallback must not run when the index answered"
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(vector_search_indexes=index))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id="u1", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC))])
+
+    saved = [m["flyer_item_id"] for m in json.loads(writes[0]["rows"])]
+    assert saved == ["sof0", "sof1", "sof2", "ss1"] and len(reads) == 1
+
+
+def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
+    from apps.api import databricks_sql
+
+    up = {"ok": True}
+
+    def run(sql, params):
+        if not up["ok"]:
+            raise RuntimeError("warehouse down")
+        return [{"n": 1}]
+
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]
+    up["ok"] = False
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]  # screens still get the last good result
+    with pytest.raises(RuntimeError):
+        databricks_sql.query("SELECT 1", fresh=True)
+
+
+def test_sweep_does_not_mark_done_from_a_cached_item_scan(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"sig": "Save-On-Foods=2026-11-05:276:1", "items_up": True}
+    item = {"user_item_id": "u1", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+            "added_at": datetime.now(UTC)}
+
+    def run(sql, params):  # only the warehouse is faked; the real query() and its cache are exercised
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        if not state["items_up"]:
+            raise RuntimeError("user_items scan timed out")
+        return [item]
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_flyers", None)
+    monkeypatch.setattr(store, "_match_and_store", lambda batch: None)
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+
+    assert store.rematch_if_new_week() == 1  # caches a good item scan
+    state.update(sig="Save-On-Foods=2026-11-12:300:2", items_up=False)
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()  # must not re-match the cached snapshot
+    assert store._swept_flyers == "Save-On-Foods=2026-11-05:276:1"  # new flyers not marked swept
+
+
+def test_every_current_store_gets_matched_via_search_or_fallback(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    # Global top-N is all Save-On; No Frills is in the index (store-filtered search finds it); T&T isn't synced yet.
+    by_store = {None: [["sof1", None, 0.9], ["sof2", None, 0.85]], "No Frills": [["nf1", None, 0.8]], "T&T": []}
+    searches = []
+
+    def query_index(**kw):
+        s = json.loads(kw["filters_json"])["store"][0] if "filters_json" in kw else None
+        searches.append(s)
+        return SimpleNamespace(result=SimpleNamespace(data_array=by_store[s]))
+
+    current = [{"item_id": "sof1", "store": "Save-On-Foods"}, {"item_id": "sof2", "store": "Save-On-Foods"},
+               {"item_id": "nf1", "store": "No Frills"}, {"item_id": "tt1", "store": "T&T"}]
+    like_stores, writes = [], []
+
+    def query(sql, **p):
+        if "inline" in sql:  # LIKE fallback
+            rows = json.loads(p["rows"])
+            like_stores.extend(r["stores"] for r in rows)
+            return [{"user_item_id": rows[0]["user_item_id"], "item_id": "tt1", "brand": None}]
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client",
+                        lambda: SimpleNamespace(vector_search_indexes=SimpleNamespace(query_index=query_index)))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id=f"u{n}", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC)) for n in (1, 2)])
+
+    from collections import Counter
+    # Per item: one global search; per store: one probe; per item again only for stores the index holds.
+    # Save-On needed no top-up, and unsynced T&T is probed once, not searched per item.
+    assert Counter(searches) == {None: 2, "No Frills": 3, "T&T": 1}
+    assert like_stores == [["T&T"], ["T&T"]]  # fallback only for the store the index can't answer
+    saved = {(m["user_item_id"], m["flyer_item_id"]) for m in json.loads(writes[0]["rows"])}
+    assert saved == {(u, f) for u in ("u1", "u2") for f in ("sof1", "sof2", "nf1")} | {("u1", "tt1")}
+
+
+def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):
+    from apps.api import store
+
+    monkeypatch.setattr(store, "MOCK", True)
+    assert store.rematch_if_new_week() == 0
 
 
 def test_unknown_extractor_is_rejected(monkeypatch):
@@ -313,6 +538,57 @@ def test_extractor_failures_become_client_errors(exc, status):
 def test_voice_uses_mock_transcript():
     r = c.post("/intake/voice", headers=H, files={"file": ("a.webm", io.BytesIO(b"x"), "audio/webm")}).json()
     assert r["transcript"] and r["extraction"]["items"][0]["size_unit"] == "ml"
+
+
+def _voice():
+    return c.post("/intake/voice", headers=H, files={"file": ("a.webm", io.BytesIO(b"x"), "audio/webm")})
+
+
+def _elevenlabs_replies(status=200, body=b'{"text": "milk"}', exc=None):
+    def post(url, **kw):
+        if exc:
+            raise exc
+        return httpx.Response(status, content=body, request=httpx.Request("POST", url))
+    return post
+
+
+@pytest.mark.parametrize("reply", [
+    _elevenlabs_replies(exc=httpx.ConnectError("ElevenLabs unreachable")),
+    _elevenlabs_replies(status=503, body=b'{"detail": "busy"}'),
+    _elevenlabs_replies(body=b"<html>not json</html>"),
+    _elevenlabs_replies(body=b'{"words": []}'),
+    _elevenlabs_replies(body=b'{"text": null}'),
+    _elevenlabs_replies(body=b'["milk"]'),
+], ids=["unreachable", "http-503", "invalid-json", "missing-text", "null-text", "not-an-object"])
+def test_speech_service_failures_are_a_logged_502(monkeypatch, caplog, reply):
+    from apps.api import stt
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setattr(stt.httpx, "post", reply)
+    with caplog.at_level("WARNING", logger="apps.api.main"):
+        r = _voice()
+    assert r.status_code == 502 and "Speech service" in r.json()["detail"]
+    assert any("speech-to-text failed" in m and H["X-User-Id"] in m for m in caplog.messages)
+
+
+def test_speech_service_transcript_is_returned(monkeypatch):
+    from apps.api import stt
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setattr(stt.httpx, "post", _elevenlabs_replies(body=b'{"text": "add eggs"}'))
+    assert _voice().json()["transcript"] == "add eggs"
+
+
+def test_silent_recording_skips_extraction(monkeypatch):
+    from apps.api import stt
+
+    monkeypatch.setattr(stt, "transcribe", lambda *a: "  ")
+    app.dependency_overrides[get_extractor] = lambda: _Failing(AssertionError("extractor must not be called"))
+    try:
+        r = _voice()
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 422 and "catch" in r.json()["detail"]
 
 
 def _user(**kw):
