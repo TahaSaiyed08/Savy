@@ -62,7 +62,8 @@ class Extraction(BaseModel):
 # --- realdeal.core tables -------------------------------------------------
 
 
-# The three flyer tables follow Databricks' bronze/silver/gold layering: raw pages in, parsed listings, weekly prices out.
+# The three flyer tables follow Databricks' bronze/silver/gold layering: raw pages in, parsed listings, weekly
+# prices out.
 
 
 class FlyerPage(BaseModel):  # Bronze
