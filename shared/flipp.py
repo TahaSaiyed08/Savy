@@ -7,7 +7,8 @@ Verified live 2026-11-07 for postal code V6T1Z4 (near UBC):
   the weekly grocery flyer is the one whose categories_csv contains "Groceries".
 - GET /flyers/{id}?locale=en-ca -> {"items": [...], "pages": [...], "has_corrections": bool}. List items have
   `price` as a plain numeric string, empty for ~14% of items (confirmed live). `pages[]` entries
-  (id, left, bottom, right, top, page, name) carry NO image URL, confirmed live on five different flyers.
+  (id, left, bottom, right, top, page, name) carry NO image URL of their own. The flyer record instead has a `path`,
+  `width`, `height` and `resolutions`, from which the page picture is stitched out of 256 px tiles (render_page).
 - GET /items/{item_id} -> {"item": {...}}. Adds `description` (often not a size, sometimes null),
   `current_price` (plain numeric string, can be empty), `image_url` (a product photo, about 353x400, not the
   flyer page: `http://f.wishabi.net/page_pdf_images/...`).
@@ -24,17 +25,18 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import NamedTuple
-from urllib.parse import urlsplit
 
 import httpx
 from PIL import Image
 
-from apps.api.models import ExtractedItem, FlyerItem
+from apps.api.models import ExtractedItem, FlyerItem, clean_store_url
 from shared.stores import STORES
 from shared.units import normalize_unit, unit_price
 
 log = logging.getLogger(__name__)
 
+# Where things live. BASE is the JSON API; TILES is a separate image host. Neither needs a key, which is also why
+# the limits below (timeout, one retry, a small worker pool) are kept modest.
 BASE = "https://backflipp.wishabi.com/flipp"
 TILES = "https://f.wishabi.net"  # flyer images: a zoom pyramid of 256 px tiles, <path><level>_<col>_<row>.jpg
 USER_AGENT = "RealDeal/1.0 (+https://github.com/krish-arora-88/SurRealDeal; hackathon project, polite use)"
@@ -43,10 +45,15 @@ RETRY_SECONDS = 0.5
 TIMEOUT_SECONDS = 20.0
 WORKERS = 6  # item details in flight at once: a whole flyer in seconds, without hammering an unofficial API
 TILE = 256
+# A stitched page is the sharpest zoom level that stays under these limits, so a page is always a ~1 MB JPEG whether
+# the flyer was cut for phones or for print.
 PAGE_MAX_PIXELS = 4_000_000  # a stitched page stays about 1 MB however big the flyer
 PAGE_MAX_HEIGHT = 2700
+# Keeping ten stores per postal code bounds both the download time and the size of the saved copy.
 MAX_STORES = 10  # flyers kept per postal code, best-ranked by Flipp first
 GROCERY_CATEGORY = "Groceries"
+# Saved feeds record the version of the parser that made them (see flyers_live._read), so improving how names or
+# sizes are read only needs this number raised to roll the improvement out to every cached copy.
 PARSER_VERSION = 4  # bump when name/size parsing changes: saved flyers from an older parser are downloaded again
 
 # Grocery chains worth showing (Flipp merchant names, case-insensitive). Flipp also lists brand flyers ("President's
@@ -58,6 +65,7 @@ CHAINS = {c.casefold() for c in (
     "Buy-Low Foods", "PriceSmart Foods", "Longo's", "Choices Markets", "Nesters Market", "Urban Fare",
     "Whole Foods Market",
 )}
+# Flipp's merchant names are sometimes longer than the name shoppers know; these are shown instead.
 DISPLAY_NAMES = {"t&t supermarket": "T&T", "pricesmart foods": "PriceSmart Foods"}
 
 # Flipp merchant name -> our store key (shared/stores.py), confirmed against the live /flyers response.
@@ -69,6 +77,11 @@ MERCHANT_TO_STORE_KEY = {
     "T&T Supermarket": "tnt",
 }
 
+# Name-parsing patterns used by split_name below, each tuned against real flyer text:
+#   _MULTI    a multi-buy price ("2/ $7.50") applies to that many units
+#   _OR       "X or Y" tiles advertise several products under one price and size
+#   _SIZE_TAIL the trailing "2.5 LB" / "375 g" that belongs to the size, not the name
+#   _VARIANTS  qualifiers (2%, organic, boneless...) that go in the variant column rather than the item name
 _MULTI = re.compile(r"^\s*(\d+)\s*(?:/|for\b)", re.I)  # pre_price_text "2/" or "2 for"
 _OR = re.compile(r"\s+or\s+", re.I)
 _MARKS = re.compile("[®™©]")
@@ -81,9 +94,13 @@ _VARIANTS = re.compile(
 
 
 def _fold(s: str) -> str:
+    # Lowercase with accents flattened, so "Crème" compares equal to "creme" when checking whether a name starts with
+    # its brand.
     return unicodedata.normalize("NFKD", s).encode("ascii", "replace").decode().lower()
 
 
+# One shared client (connection pooling), safe across threads. The pool is sized a little above WORKERS so a retry
+# never has to wait for a free connection.
 _http = httpx.Client(timeout=TIMEOUT_SECONDS, headers={"User-Agent": USER_AGENT}, follow_redirects=True,
                      limits=httpx.Limits(max_connections=WORKERS + 2))
 
@@ -119,6 +136,8 @@ def display_name(merchant: str) -> str:
     return DISPLAY_NAMES.get(merchant.casefold(), merchant)
 
 
+# Which of the ~90 flyers near a postal code to show: only real grocery chains (CHAINS), and per chain the widest
+# grocery flyer, because a chain can publish several (weekly, regional, a themed catalogue).
 def chain_flyers(flyers: list[dict], limit: int = MAX_STORES) -> dict[str, dict]:
     """store display name -> that chain's widest grocery flyer, best-ranked chains first. Flipp's `priority` is its
     own ranking for the postal code; a chain can run several grocery flyers, and the widest is the weekly one."""
@@ -149,6 +168,7 @@ def get_item_detail(item_id: int) -> dict:
 
 
 def _price(raw) -> float | None:
+    # Flipp prices arrive as strings ("3.99", "$3.99", "") or numbers; anything unreadable is "no price", never zero.
     if raw in (None, ""):
         return None
     if isinstance(raw, int | float):
@@ -167,6 +187,7 @@ def to_extracted_item(item: dict, detail: dict | None = None) -> ExtractedItem |
     (e.g. "NO NAME NATURALLY IMPERFECT MIXED SWEET PEPPERS, 2.5 LB"). None if there's no usable price —
     callers should skip the row entirely rather than save a priceless deal.
     """
+    # Prefer the item's detail record, whose price is the up-to-date one; fall back to the flyer list's own copy.
     price = _price((detail or {}).get("current_price"))
     if price is None:
         price = _price(item.get("price")) or _price(item.get("current_price"))
@@ -181,7 +202,7 @@ def to_extracted_item(item: dict, detail: dict | None = None) -> ExtractedItem |
         size_qty=size.qty if size else None,
         size_unit=size.unit if size else None,
         price=price,
-        confidence=0.95,  # structured first-party data, not OCR off a photo
+        confidence=0.95,  # structured first-party data, not OCR off a photo (so the app never asks to confirm it)
     )
 
 
@@ -189,6 +210,7 @@ def flyer_item_from(
     x: ExtractedItem, *, item_id: str, page_id: str, store: str, week_start: date, raw_text: str, **placement
 ) -> FlyerItem:
     """Wrap a parsed ExtractedItem into a FlyerItem row, mirroring apps/api/mock_data.py's _item() helper."""
+    # Unit price (per 100 g, per 100 ml or per each) is what makes a 2 L and a 4 L jug comparable.
     size = normalize_unit(f"{x.size_qty}{x.size_unit}") if x.size_qty and x.size_unit else None
     up = unit_price(x.price, size) if x.price is not None else None
     return FlyerItem(
@@ -210,6 +232,7 @@ def split_name(brand: str | None, name: str) -> tuple[str | None, str, str | Non
     "PC® MILK OR DARK CHOCOLATE COVERED ALMONDS, 70 G" is one product, not "Milk": a lone word before "or" is a
     flavour, not a product.
     """
+    # Strip the trademark symbols, then split "A or B" into candidate products; the first product names the row.
     brand = _MARKS.sub("", (brand or "").split("|")[0]).strip() or None
     clean = _MARKS.sub("", name)
     products = _OR.split(clean)
@@ -220,24 +243,25 @@ def split_name(brand: str | None, name: str) -> tuple[str | None, str, str | Non
     def unbranded(text: str) -> str:
         return text[len(brand):].strip() if brand and _fold(text).startswith(_fold(brand)) else text
 
+    # The three cases below are the real-world shapes seen in flyers: a brand-only first part, a one-word flavour
+    # before "or", and the ordinary case where the first product is simply the first.
     first = unbranded(head(products[0]))
     if not first and len(products) > 1:  # "PC OR BLUE MENU ENTREES": the product is named after the "or"
         first = head(products[1])
     elif len(first.split()) == 1 and len(products) > 1 and len(head(products[1]).split()) >= 3:
         first = unbranded(head(clean))
     first = first or clean.split(",")[0].strip()
+    # Pull qualifiers like "2%" or "organic" out of the name into `variant`, so "Organic Milk" and "Milk" are not equal.
     variants = [" ".join(m.group(0).lower().split()) for m in _VARIANTS.finditer(first)]
     item = " ".join(_VARIANTS.sub(" ", first).split()) or first
-    if item.isupper():
+    if item.isupper():  # flyers shout in capitals; show Title Case, keeping small words like "of" lower
         item = _title(item)
     return brand, item, " ".join(variants) or None
 
 
 def store_url(raw: str | None) -> str | None:
-    """The store's own page for an item, from Flipp's ttm_url, without Flipp's tracking tags. https only: the value
-    comes from outside and ends up in a link."""
-    parts = urlsplit(raw or "")
-    return f"https://{parts.netloc}{parts.path}" if parts.scheme == "https" and parts.netloc else None
+    """The store's own page for an item, from Flipp's ttm_url (see models.clean_store_url)."""
+    return clean_store_url(raw)
 
 
 def _size_of_name(name: str):
@@ -247,10 +271,13 @@ def _size_of_name(name: str):
 
 def _placement(item: dict, flyer: dict, pages: list[dict]) -> dict | None:
     """Where the tile sits on its page, as fractions with the origin top-left. Flipp's y axis points up."""
+    # A tile belongs to the page its horizontal centre falls in. Flipp lays all pages side by side in one coordinate
+    # space, and a tile can straddle a page edge.
     cx = (item["left"] + item["right"]) / 2
     page = next((p for p in pages if p["left"] <= cx < p["right"]), None)
     if page is None:
         return None
+    # Convert to fractions of the page. The y axis points up in Flipp and down on screens, hence top/bottom swapped.
     w, h = page["right"] - page["left"], page["top"] - page["bottom"]
     box = [(item["left"] - page["left"]) / w, (page["top"] - item["top"]) / h,
            (item["right"] - page["left"]) / w, (page["top"] - item["bottom"]) / h]
@@ -258,6 +285,7 @@ def _placement(item: dict, flyer: dict, pages: list[dict]) -> dict | None:
         "page_id": f"flipp-{flyer['id']}-{page['page']}", "page_no": page["page"], "page_aspect": round(w / h, 4),
         "bbox": [round(min(max(v, 0.0), 1.0), 4) for v in box],
         "valid_from": flyer["valid_from"][:10], "valid_to": flyer["valid_to"][:10],
+        # The product's own cutout picture, upgraded to https so the app never loads mixed content.
         "image_url": (item.get("cutout_image_url") or "").replace("http://", "https://", 1) or None,
     }
 
@@ -268,14 +296,17 @@ def _row(item: dict, detail: dict, flyer: dict, pages: list[dict], store: str, w
     price = _price(detail.get("current_price")) or _price(item.get("price"))
     if where is None or price is None:
         return None
+    # "2 for $7.50" is $3.75 each: store the per-unit price so comparisons and savings are in the same terms.
     multi = _MULTI.match(detail.get("pre_price_text") or "")
     if multi and int(multi[1]) > 1:  # "2/ $7.50": the price is for that many units
         price = round(price / int(multi[1]), 2)
     name = item.get("name") or ""
     brand, product, variant = split_name(item.get("brand"), name)
+    # The name usually carries the size; the item's description is only a fallback (it is often "Selected varieties").
     size = _size_of_name(name) or normalize_unit(detail.get("description") or "")
     x = ExtractedItem(brand=brand, item=product, variant=variant, size_qty=size.qty if size else None,
                       size_unit=size.unit if size else None, price=price, confidence=0.95)
+    # Keep the text exactly as printed (name plus price text): some sizes and "/lb" rules are only readable from it.
     raw = " ".join(p for p in (name, detail.get("price_text")) if p)
     return flyer_item_from(
         x, item_id=f"flipp-{item['id']}", store=store, week_start=week, raw_text=raw,
@@ -291,12 +322,14 @@ def fetch_flyer(flyer: dict, store: str) -> dict:
     The details are fetched WORKERS at a time, so a 300-item flyer takes seconds, not minutes.
     Returns {"week": date, "rows": list[dict], "item_count": int, "sized_count": int}.
     """
+    # Two kinds of requests: one for the flyer's tile list, then one per tile for its detail, in parallel batches.
     week = date.fromisoformat(flyer["valid_from"][:10])
     detail = get_flyer_detail(flyer["id"])
     raw_items = detail.get("items", [])
     pages = sorted(detail.get("pages", []), key=lambda p: p["left"])
     products = [it for it in raw_items if it.get("display_type") == 1]  # not banners or page furniture
 
+    # A tile whose detail can't be fetched is skipped, not guessed: without it we can't tell a "2 for" price.
     def one(it: dict) -> FlyerItem | None:
         try:
             item_detail = get_item_detail(it["id"])
@@ -323,6 +356,8 @@ def flyer_meta(flyer: dict, pages: list[dict]) -> dict:
     }
 
 
+# Page images, step 1 of 2: plan. A flyer image is a pyramid of 256 px tiles at several zoom levels. plan_page picks
+# the level and the tile range that cover one page; render_page fetches and stitches them.
 class PagePlan(NamedTuple):
     level: int  # index into the flyer's resolutions; 0 is the smallest image
     scale: float  # full-size pixels per pixel at this level
@@ -341,11 +376,14 @@ def plan_page(width: float, height: float, resolutions: list[float], rect: list[
     """
     left, right, top, bottom = rect
     pw, ph = right - left, top - bottom
+    # Walk from the sharpest level down and stop at the first one small enough to keep the page light.
     level = 0
     for z in range(len(resolutions) - 1, -1, -1):  # sharpest first
         if pw * ph / resolutions[z] ** 2 <= PAGE_MAX_PIXELS and ph / resolutions[z] <= PAGE_MAX_HEIGHT:
             level = z
             break
+    # Convert the page rectangle from full-size pixels to this level's pixels, then to tile columns and rows. `pad`
+    # accounts for the partial tile row, which sits at the top because rows are counted from the bottom.
     scale = resolutions[level]
     level_h = math.ceil(height / scale)
     nrows = math.ceil(level_h / TILE)
@@ -358,6 +396,8 @@ def plan_page(width: float, height: float, resolutions: list[float], rect: list[
     return PagePlan(level, scale, (x0, y0, x1, y1), cols, rows, nrows, pad)
 
 
+# Step 2 of 2: render. Missing tiles are normal (Flipp never cuts empty edge tiles), so they stay white rather than
+# failing the whole page.
 def _tile(url: str) -> bytes | None:
     """One image tile, or None when it isn't there (an edge tile Flipp never cut) or can't be fetched."""
     try:
@@ -384,6 +424,7 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
     plan = plan_page(meta["width"], meta["height"], meta["resolutions"], rect)
     wanted = [(c, k) for k in range(plan.rows[0], plan.rows[1] + 1) for c in range(plan.cols[0], plan.cols[1] + 1)]
 
+    # Flipp numbers tile rows from the bottom, while the canvas below is built from the top, so flip the row number.
     def url(ck: tuple[int, int]) -> str:
         return f"{TILES}/{meta['path']}{plan.level}_{ck[0]}_{plan.nrows - 1 - ck[1]}.jpg"
 
@@ -391,6 +432,7 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
         fetched = list(pool.map(lambda ck: _tile(url(ck)), wanted))
     if not any(fetched):
         return None
+    # Paste the tiles onto one big white canvas, then crop to exactly the page's rectangle (tiles overshoot its edges).
     c0, k0 = plan.cols[0], plan.rows[0]
     canvas = Image.new("RGB", ((plan.cols[1] - c0 + 1) * TILE, (plan.rows[1] - k0 + 1) * TILE), "white")
     for (c, k), data in zip(wanted, fetched, strict=True):
@@ -400,13 +442,15 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
     ox, oy = c0 * TILE, k0 * TILE - plan.pad
     page = canvas.crop((x0 - ox, y0 - oy, x1 - ox, y1 - oy))
     out = io.BytesIO()
+    # Quality 82 + progressive: small enough to load fast on a phone, sharp enough to read the fine print when zoomed.
     page.save(out, "JPEG", quality=82, optimize=True, progressive=True)
     return out.getvalue()
 
 
 def fetch_grocery_flyer(merchant: str, store_key: str, postal: str = DEFAULT_POSTAL) -> dict:
-    """One named store's weekly grocery flyer. `pages` is always []: Flipp publishes no whole-page images, so the
-    app lays the cutouts out at their boxes. `rows` is the real value."""
+    """One named store's weekly grocery flyer, by merchant name. Only the tests call this today: the live API goes
+    through flyers_live -> grocery_flyers_for -> fetch_flyer, and the Databricks pipeline has its own fetcher in
+    databricks/fetchers/flipp.py. `pages` is always []: real page pictures are stitched on demand by render_page."""
     flyer = grocery_flyer_for(list_weekly_flyers(postal), merchant)
     if flyer is None:
         raise RuntimeError(f"no Groceries flyer found for merchant={merchant!r} near {postal}")

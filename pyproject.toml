@@ -28,3 +28,7 @@ extend-exclude = ["apps/web"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The README asset generator is mostly SVG markup in strings; wrapping those lines would make them harder to read.
+"docs/assets/generate.py" = ["E501"]

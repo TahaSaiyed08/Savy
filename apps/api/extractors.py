@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from typing import Protocol
 
+import httpx
 from fastapi import HTTPException
 
 from apps.api.models import ExtractedItem, Extraction, Mode
@@ -17,12 +19,16 @@ from shared.units import normalize_unit
 log = logging.getLogger(__name__)
 
 
+# An extractor turns a photo or a line of text into candidate items. Three interchangeable implementations sit behind
+# this one interface (Claude, Databricks ai_query, and a canned mock), and get_extractor() picks one at startup.
 class Extractor(Protocol):
     def extract(
         self, mode: Mode, *, image: bytes | None = None, media_type: str = "image/jpeg", text: str | None = None
     ) -> Extraction: ...
 
 
+# The first bytes of a file say what it really is. Phones and browsers often mislabel uploads (HEIC called JPEG), and
+# the model APIs reject a wrong type, so the real type is detected rather than trusted.
 _MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
 
 
@@ -46,6 +52,7 @@ class ClaudeExtractor:
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
+        # A message to Claude is a list of parts: the picture (if any) first, then the text instruction.
         content: list[dict] = []
         if image:
             media_type = sniff_media_type(image)
@@ -55,6 +62,7 @@ class ClaudeExtractor:
             data = base64.standard_b64encode(image).decode()
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
+        # `parse` makes the SDK validate the reply against Extraction, so a malformed answer fails here, not later.
         r = self.client.messages.parse(
             model=self.model,
             max_tokens=16000,
@@ -62,16 +70,20 @@ class ClaudeExtractor:
             messages=[{"role": "user", "content": content}],
             output_format=Extraction,
         )
+        # A refusal or empty parse becomes a RuntimeError, which the API reports to the app as a 422 "couldn't read".
         if r.stop_reason == "refusal" or r.parsed_output is None:
             raise RuntimeError(f"extraction failed: stop_reason={r.stop_reason}")
         return r.parsed_output
 
 
+# Failures of the backend itself (as opposed to a bad photo) get their own type so the API can answer 502 "try again"
+# instead of blaming the person's input with a 422.
 class ExtractionServiceError(Exception):
     """The extraction backend itself failed (warehouse, model endpoint, upload): a 502, not the photo's fault."""
 
 
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+# Asks Databricks to force the model's reply to match the Extraction JSON schema, the same contract Claude uses.
 _RESPONSE_FORMAT = json.dumps({"type": "json_schema", "json_schema": {
     "name": "extraction", "strict": True, "schema": Extraction.model_json_schema()}})
 
@@ -91,6 +103,7 @@ class DatabricksAIExtractor:
         if missing:
             raise RuntimeError(f"EXTRACTOR=databricks needs {', '.join(missing)}")
         self.model = os.getenv("DATABRICKS_EXTRACT_MODEL", "databricks-llama-4-maverick")
+        # The endpoint name is pasted into the SQL text (SQL can't parameterise it), so only plain names are allowed.
         if not re.fullmatch(r"[\w.-]+", self.model):  # it's inlined in the SQL: endpoint names can't be parameters
             raise ValueError(f"DATABRICKS_EXTRACT_MODEL={self.model!r} isn't a serving endpoint name")
 
@@ -104,6 +117,8 @@ class DatabricksAIExtractor:
         if media_type is None:
             raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
                                      "(iPhone: Settings > Camera > Formats > Most Compatible)")
+        # Images take a detour: upload to a Volume, read them back inside the query, and always delete afterwards (the
+        # `finally` below), so receipts don't pile up in the workspace.
         path = f"{self.UPLOADS}/{uuid.uuid4()}.{_EXT[media_type]}"
         try:
             try:
@@ -128,6 +143,7 @@ class DatabricksAIExtractor:
 
     @staticmethod
     def _parse(rows: list[dict]) -> Extraction:
+        # The query returns one row with the model's JSON in column `r`; validate it against the schema.
         raw = rows[0].get("r") if rows else None
         try:
             return Extraction.model_validate_json(raw or "")
@@ -135,6 +151,70 @@ class DatabricksAIExtractor:
             raise RuntimeError(f"ai_query returned no usable extraction: {str(raw)[:200]}") from e
 
 
+class GeminiExtractor:
+    """Google's Gemini API (EXTRACTOR=gemini, or the default when only GEMINI_API_KEY is set).
+
+    Same prompts and Extraction schema as Claude and ai_query, called over REST with httpx so it adds no dependency. The
+    model is asked for JSON that matches the schema, and the reply is validated against it, so a malformed answer fails
+    here (as a 422) instead of reaching the app.
+    """
+
+    URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    TIMEOUT = 60.0  # a receipt photo can take a while
+
+    def __init__(self) -> None:
+        self.key = os.getenv("GEMINI_API_KEY")
+        if not self.key:  # fail at startup, like the other extractors, not on the first upload
+            raise RuntimeError("EXTRACTOR=gemini needs GEMINI_API_KEY")
+        self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        if not re.fullmatch(r"[\w.-]+", self.model):  # the name goes into the URL path
+            raise ValueError(f"GEMINI_MODEL={self.model!r} isn't a model name")
+
+    def _post(self, body: dict) -> httpx.Response:
+        """One call, retried once when Gemini says it is busy (429, 500, 502, 503: spikes are usually brief)."""
+        url, headers = self.URL.format(model=self.model), {"x-goog-api-key": self.key}
+        r = httpx.post(url, headers=headers, json=body, timeout=self.TIMEOUT)
+        if r.status_code in (429, 500, 502, 503):
+            time.sleep(2)
+            r = httpx.post(url, headers=headers, json=body, timeout=self.TIMEOUT)
+        return r
+
+    def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
+        parts: list[dict] = []
+        if image:
+            media_type = sniff_media_type(image)
+            if media_type is None:
+                raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
+                                         "(iPhone: Settings > Camera > Formats > Most Compatible)")
+            parts.append({"inline_data": {"mime_type": media_type, "data": base64.standard_b64encode(image).decode()}})
+        parts.append({"text": text or "Extract the items."})
+        body = {
+            "system_instruction": {"parts": [{"text": load_prompt(mode)}]},
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"responseMimeType": "application/json",
+                                 "responseJsonSchema": Extraction.model_json_schema(), "temperature": 0},
+        }
+        try:
+            r = self._post(body)
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPStatusError as e:  # only the status: the response can echo parts of the request
+            raise ExtractionServiceError(f"Gemini answered {e.response.status_code}") from e
+        except (httpx.HTTPError, ValueError) as e:
+            raise ExtractionServiceError(f"Gemini request failed: {type(e).__name__}") from e
+        try:
+            reply = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError) as e:  # blocked, or an empty answer
+            reason = (data.get("promptFeedback") or {}).get("blockReason") or "no answer"
+            raise RuntimeError(f"Gemini returned no usable extraction: {reason}") from e
+        try:
+            return Extraction.model_validate_json(reply)
+        except ValueError as e:  # the model answered, but not in the schema: treated like a Claude refusal (422)
+            raise RuntimeError(f"Gemini returned no usable extraction: {reply[:200]}") from e
+
+
+# What the app uses with no API keys, so a fresh clone runs end to end. The numbers are chosen to exercise the UI: one
+# low-confidence item per mode shows the "please confirm" sheet.
 class MockExtractor:
     """Canned output so the app runs from a fresh clone with no keys."""
 
@@ -162,11 +242,15 @@ class MockExtractor:
         ])
 
 
-_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor}
+_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor,
+               "gemini": GeminiExtractor}
 
 
 def get_extractor() -> Extractor:
-    choice = os.getenv("EXTRACTOR") or ("claude" if os.getenv("ANTHROPIC_API_KEY") else "mock")
+    # Explicit EXTRACTOR wins; otherwise an Anthropic key means Claude, a Gemini key means Gemini, and no key means the
+    # mock.
+    choice = os.getenv("EXTRACTOR") or (
+        "claude" if os.getenv("ANTHROPIC_API_KEY") else "gemini" if os.getenv("GEMINI_API_KEY") else "mock")
     if choice not in _EXTRACTORS:
         raise ValueError(f"EXTRACTOR={choice!r} is not one of: {', '.join(_EXTRACTORS)}")
     return _EXTRACTORS[choice]()

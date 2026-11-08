@@ -37,6 +37,7 @@ _WORD = re.compile(r"[a-z0-9%]+")
 
 
 def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
+    # The human-readable name shown everywhere: "Kraft Peanut Butter Smooth 1 kg", skipping whichever parts are blank.
     size = f"{x.size_qty:g} {x.size_unit}" if x.size_qty and x.size_unit else ""
     return " ".join(p for p in (x.brand, x.item, x.variant, size) if p)
 
@@ -45,11 +46,13 @@ def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
 def _words(s: str | None) -> frozenset[str]:
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().replace("'", "")
     s = re.sub(r"\s+%", "%", s)  # "2 %" (bilingual labels) == "2%"
+    # Drop a trailing plural "s" so "eggs" == "egg", but keep "ss" words ("grass") and short words ("gas", "bus").
     return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
                      for w in _WORD.findall(s))
 
 
 def size_of(x: UserItem | FlyerItem) -> Size | None:
+    # The size as a base-unit quantity (millilitres, grams or each) so 2 L and 2000 mL are the same number.
     return size_from(x.size_qty, x.size_unit)
 
 
@@ -65,6 +68,7 @@ def missing(u: UserItem) -> list[str]:
 
 
 def same_item(u: UserItem, f: FlyerItem) -> bool:
+    # The one rule for "this listing is the person's item": every field filled in, and every field equal.
     return not missing(u) and _identical(u, f)
 
 
@@ -74,11 +78,14 @@ def is_listing(x: UserItem | ExtractedItem, flyers: list[FlyerItem]) -> bool:
 
 
 def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
+    # Words must match exactly for brand/item/variant (so "2%" never matches "1%", and "milk" never matches
+    # "chocolate milk"); only the size gets a tolerance window.
     if any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
         return False
     want = size_of(u)
     if want is None:  # only a flyer-added item gets here: its size is its listing's, and that listing has none
         return size_of(f) is None
+    # Some flyers only print the size inside the tile text, so fall back to reading it from there.
     have = size_of(f) or normalize_unit(f.raw_text or "")  # "$0.79 /lb" with no size field
     if have is None or have.unit != want.unit:
         return False
@@ -89,6 +96,8 @@ def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
 
 
 def cost(listing: FlyerItem | Deal, user: UserItem) -> float:
+    # Compare listings by what the person would actually pay for their amount: a bigger pack with a lower unit price
+    # can win even when its sticker price is higher.
     """What the user's size costs at this listing: unit price scaled to the user's size when known, else shelf price."""
     up = unit_price(1.0, size_of(user))  # (100 / qty) or (1 / count), so cost = unit_price / up[0]
     if listing.unit_price is not None and up and listing.unit == up[1]:
@@ -100,10 +109,12 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
     """Cheapest exact listing per (user item, store), with savings vs the cross-store median unit price."""
     out: list[Deal] = []
     for u in user_items:
+        # One deal per store: if a store lists the item twice (two pages), keep its cheaper listing.
         best: dict[str, FlyerItem] = {}
         for f in flyer_items:
             if f.price is not None and same_item(u, f) and (f.store not in best or cost(f, u) < cost(best[f.store], u)):
                 best[f.store] = f
+        # "Savings vs median" is how far under the typical store this one is, so it needs unit prices to compare.
         prices = [f.unit_price for f in best.values() if f.unit_price is not None]
         mid = median(prices) if prices else None
         out += [Deal(
@@ -113,12 +124,13 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
             item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
             page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
             image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
-            flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
+            store_url=f.store_url,
         ) for f in best.values()]
     return out
 
 
 def cheapest(deals: list[Deal]) -> dict[str, Deal]:
+    # Ties keep whichever deal came first, so the result is stable between requests.
     """user_item_id -> its cheapest listing across all stores (what tapping the item opens)."""
     best: dict[str, Deal] = {}
     for d in deals:
@@ -136,32 +148,17 @@ def _browse_key(f: FlyerItem) -> tuple:
             size.unit if size else None)
 
 
-_FLIPP_PAGE = re.compile(r"flipp-(\d+)-\d+")
-_FLIPP_ITEM = re.compile(r"flipp-(\d+)")
-
-
-def flyer_url(f: FlyerItem) -> str | None:
-    """The original flyer, on Flipp's website. Only listings that came from Flipp have one."""
-    m = _FLIPP_PAGE.fullmatch(f.page_id)
-    return f"https://flipp.com/en-ca/flyer/{m[1]}" if m else None
-
-
-def item_url(f: FlyerItem) -> str | None:
-    """That flyer opened at this item."""
-    m = _FLIPP_ITEM.fullmatch(f.item_id)
-    return f"https://flipp.com/en-ca/item/{m[1]}" if m else None
-
-
 def listing(f: FlyerItem) -> FlyerListing:
     return FlyerListing(
         label=label(f), store=f.store, price=f.price, unit_price=f.unit_price, unit=f.unit, flyer_item_id=f.item_id,
         page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
         image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
-        flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
+        store_url=f.store_url,
     )
 
 
 def saves_vs_next(deals: list[Deal]) -> dict[str, float]:
+    # The "$X less than the next store" badge: the gap between the cheapest and second-cheapest store.
     """user_item_id -> how much less its cheapest store is than the next one. Absent with one store or a tie."""
     costs: dict[str, list[float]] = {}
     for d in deals:
@@ -170,6 +167,8 @@ def saves_vs_next(deals: list[Deal]) -> dict[str, float]:
             if len(c) > 1 and c[1] > c[0]}
 
 
+# Search: what people type is looser than a match. The words must appear, sizes are ignored, and the last word may
+# be half typed. The functions below rank results; none of them excludes an item the words already allow.
 _SIZE_WORD = re.compile(r"\d+(?:\.\d+)?(?:l|ml|g|kg|lb|lbs|oz|ea|ct|pk)?|l|ml|g|kg|lb|lbs|oz|ea|ct|pk|pack|x")
 
 
@@ -190,6 +189,7 @@ def _starts(tokens: frozenset[str], words: frozenset[str]) -> bool:
 def _split_query(q: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
     """(required, preferred): the words that must be found, and numbers like "2%" that only rank listings higher,
     so "2% milk" still finds milk in a week with no 2%."""
+    # Letters-only words are the thing being searched for; words with digits ("2%", "500g") are only a preference.
     required = frozenset(w for w in q if w.isalpha())
     return (required, q - required) if required else (q, frozenset())
 
@@ -210,6 +210,9 @@ def closest(u: UserItem, flyer_items: list[FlyerItem], n: int = 5) -> list[Flyer
     if not required:
         return []
     brand, variant, size = _query_words(u.brand), _query_words(u.variant), size_of(u)
+    # Each candidate gets a tuple of "badness" flags that sort ascending, so the best match is the one with the fewest
+    # misses, checked in priority order: named in the item, is the main noun, exact words, brand, variant, extra
+    # words, size unit, then price.
     ranked = []
     for f in flyer_items:
         words = _listing_words(f)
@@ -233,6 +236,8 @@ def _sort_key(sort: str, q: frozenset[str]):
         # and most widely sold, then cheapest.
         required, preferred = _split_query(q)
 
+        # A search for "ramen" should lead with ramen, not with a sauce that mentions it, so the tuple orders by
+        # how central the word is, then how plain and widely sold the product is.
         def relevance(g: FlyerGroup):
             name = _words(" ".join(p for p in (g.brand, g.item, g.variant) if p))
             item = _words(g.item)
@@ -251,6 +256,7 @@ def _sort_key(sort: str, q: frozenset[str]):
 def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str | None = None,
                   sort: str = "savings", category: str | None = None) -> list[FlyerGroup]:
     """Every priced listing as one row per product with its cheapest store. store limits rows to what it carries."""
+    # Step 1: bucket listings by product so each product is one row, however many stores advertise it.
     groups: dict[tuple, list[FlyerItem]] = {}
     for f in flyer_items:
         if f.price is not None:
@@ -260,6 +266,7 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
     if q and q.strip() and not q_words:  # only a size was typed: nothing to look for
         return []
     needed = _split_query(q_words)[0] if sort == "relevance" else q_words  # relevance only requires the plain words
+    # Step 2: filter each product by category/store/search words and pick its cheapest listing.
     out = []
     for rows in groups.values():
         if category and rows[0].category != category:
@@ -279,6 +286,7 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
     if sort == "relevance" and needed:  # "Soy Sauce, great for ramen" is not a ramen: small print only fills gaps
         named = [g for g in out if _starts(needed, _words(g.item))]
         out = named if len(named) >= 2 else out
+    # Step 3: sort by the chosen order, with name/size tie-breakers so pages never reshuffle between requests.
     primary = _sort_key(sort, q_words)
     out.sort(key=lambda g: (primary(g), g.item.lower(), (g.brand or "").lower(), (g.variant or "").lower(),
                             g.size_qty or 0))
@@ -286,6 +294,8 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
 
 
 def basket(user_items: list[UserItem], deals: list[Deal]) -> Basket:
+    # Prices the whole list two ways: all at one store (a store missing items ranks below one that has them all), or
+    # split so each item is bought at its cheapest store. `delta` is what splitting saves over the best single store.
     by_item = {u.user_item_id: u for u in user_items}
     stores = sorted({d.store for d in deals if d.user_item_id in by_item})
     per_store: dict[str, dict[str, float]] = {s: {} for s in stores}

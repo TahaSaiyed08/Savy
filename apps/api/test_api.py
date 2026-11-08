@@ -504,6 +504,7 @@ def test_bad_extractor_config_fails_at_startup(monkeypatch):
 def test_health_reports_extractor(monkeypatch):
     monkeypatch.delenv("EXTRACTOR", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert c.get("/health").json()["extractor"] == "MockExtractor"
 
 
@@ -832,15 +833,19 @@ def test_small_print_matches_only_fill_gaps_when_the_names_have_the_word():
     assert [g.item for g in logic.browse_flyers(ramen + [sauce], "ramen", sort="relevance")] == ["Cup Ramen"] * 2
 
 
-def test_listings_link_to_the_original_flyer_on_flipp_only_when_they_came_from_there():
+def test_listings_link_to_the_store_and_never_to_the_flyer_source():
     live = _flyer(item_id="flipp-1052141198", page_id="flipp-8214584-3", store_url="https://www.nofrills.ca/p/9")
-    got = logic.listing(live)
-    assert got.flyer_url == "https://flipp.com/en-ca/flyer/8214584"
-    assert got.item_url == "https://flipp.com/en-ca/item/1052141198" and got.store_url == "https://www.nofrills.ca/p/9"
-    canned = logic.listing(FLYER_ITEMS[0])
-    assert (canned.flyer_url, canned.item_url, canned.store_url) == (None, None, None)
-    deal = logic.deals_for([_want()], [_flyer(item_id="flipp-7", page_id="flipp-70-1")])[0]
-    assert (deal.flyer_url, deal.item_url) == ("https://flipp.com/en-ca/flyer/70", "https://flipp.com/en-ca/item/7")
+    got = logic.listing(live).model_dump()
+    assert got["store_url"] == "https://www.nofrills.ca/p/9"
+    deal = logic.deals_for([_want()], [_flyer(item_id="flipp-7", page_id="flipp-70-1")])[0].model_dump()
+    assert not any("flipp.com" in str(v) for v in [*got.values(), *deal.values()])
+
+
+def test_a_store_page_that_is_really_an_ad_tracker_is_never_a_link():
+    # Food Basics tiles carry ad.doubleclick.net click-trackers as their "store page"; an older parser saved them
+    tracked = _flyer(store_url="https://ad.doubleclick.net/ddm/trackclk/N1;dc_trk_aid=5")
+    assert tracked.store_url is None and logic.listing(tracked).store_url is None
+    assert _flyer(store_url="https://www.flipp.com/en-ca/item/1").store_url is None
 
 
 def test_client_cannot_claim_flyer_source_for_something_no_flyer_lists():

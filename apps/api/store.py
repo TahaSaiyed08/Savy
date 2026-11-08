@@ -17,9 +17,14 @@ from apps.api.mock_data import FLYER_ITEMS, seed_items
 from apps.api.models import Extraction, FlyerItem, ItemPatch, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
+# Two backends behind one set of functions. MOCK keeps the person's list in this process's memory (lost on restart,
+# fine for demos and tests); the other mode reads and writes Databricks tables through the SQL warehouse. main.py
+# never needs to know which one it is talking to. Without DATABRICKS_HOST, MOCK is on by default.
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
+# Where receipt photos are kept in Databricks (a Unity Catalog Volume), one folder per user.
 UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+# The only item columns a client may change. Anything else in a PATCH is ignored rather than written.
 _EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
 
 # Every statement is a fixed literal; all values travel as named parameters. Per-item writes are scoped to their
@@ -63,11 +68,14 @@ def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **f
 
 
 # --- mock -----------------------------------------------------------------
+# One list per user id, created the first time that user is seen.
 # ponytail: process memory, lost on restart; fine for mock mode only.
 _items: dict[UUID, list[UserItem]] = {}
 
 
 def _mock_items(user_id: UUID, postal: str | None = None) -> list[UserItem]:
+    # A new user starts with a few pantry items picked from this week's real flyers, so the app has something to show
+    # (and match) on first open instead of an empty screen.
     if user_id not in _items:
         try:
             seeds = seed_items(flyer_items(postal))
@@ -79,6 +87,8 @@ def _mock_items(user_id: UUID, postal: str | None = None) -> list[UserItem]:
 
 
 # --- flyers (both modes) ----------------------------------------------------
+# Databricks mode only: the flyer table is read at most once every 10 minutes and shared by all requests. (Mock mode
+# has its own, richer freshness logic in flyers_live.)
 FLYER_TTL = 600.0  # flyers change weekly; every list read matches against this in-process copy
 FLYER_RETRY = 60.0  # after a failed refresh, keep serving the old copy and try again this soon
 _flyer_cache: tuple[float, list[FlyerItem]] = (float("-inf"), [])  # -inf: monotonic() can be < TTL after boot
@@ -92,6 +102,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
     FLYER_ITEMS when live flyers are off. Databricks mode reads the table, which has no postal code.
     Raises only if the very first load fails; after that a failed refresh keeps the previous copy (logged).
     """
+    # Three sources: live Flipp feeds, the canned demo flyers, or the Databricks table. Callers just get a list.
     global _flyer_cache
     if MOCK:
         return flyers_live.items(postal or flyers_live.DEFAULT_POSTAL) if flyers_live.ENABLED else FLYER_ITEMS
@@ -113,6 +124,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
                         exc_info=True)
             _flyer_cache = (time.monotonic() - FLYER_TTL + FLYER_RETRY, items)
             return items
+        # Rows that don't fit the model are dropped and counted, never allowed to fail the whole load.
         today, fresh, bad = date.today(), [], 0
         for r in rows:
             try:
@@ -127,6 +139,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
 
 
 def page_tiles(page_id: str) -> list[FlyerItem]:
+    # Every tile on one flyer page: what the Price Match screen draws its highlight from.
     if MOCK and flyers_live.ENABLED:
         return flyers_live.page(page_id)  # page ids are globally unique, so no postal code is needed
     return [f for f in flyer_items() if f.page_id == page_id]
@@ -158,6 +171,8 @@ def page_image(path: str) -> bytes | None:
 
 
 def list_items(user_id: UUID, fresh: bool = False, postal: str | None = None) -> list[UserItem]:
+    # `fresh` matters because the SQL layer can fall back to its last good answer if the warehouse is slow; right after
+    # a write that would show stale data, so writes read back with fresh=True.
     """fresh=True right after a write: never served from the last-good cache."""
     if MOCK:
         return _mock_items(user_id, postal)
@@ -168,6 +183,7 @@ def list_items(user_id: UUID, fresh: bool = False, postal: str | None = None) ->
 
 
 def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[UserItem]:
+    # Ids and timestamps are made here on the server, never trusted from the client.
     new = [_new_item(user_id, req.source, req.bought_at, **i.model_dump(include=set(_EDITABLE))) for i in req.items]
     if MOCK:
         _mock_items(user_id, postal)[:0] = new
@@ -176,6 +192,8 @@ def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[
 
     rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket", "done"}), "user_id": str(u.user_id)}
                        for u in new])
+    # Two statements however many items: register the user if new, and insert every item as one batch (as JSON that
+    # the warehouse expands into rows). They run side by side to save a round trip.
     with ThreadPoolExecutor(max_workers=2) as pool:  # fixed statement count however many items
         writes = [pool.submit(db.execute, _ADD_USER, user_id=str(user_id)),
                   pool.submit(db.execute, _ADD_ITEMS, rows=rows)]
@@ -186,12 +204,15 @@ def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[
 
 def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch, postal: str | None = None) -> UserItem | None:
     """Edit fields and/or move to or from the basket. None if the user has no such item."""
+    # Only fields the client sent, and only editable ones. In mock mode the basket and "done" flags live on the item;
+    # in Databricks mode they are rows in a separate basket_items table.
     fields = {k: getattr(patch, k) for k in patch.model_fields_set if k in _EDITABLE}
     if MOCK:
         items = _mock_items(user_id, postal)
         for n, i in enumerate(items):
             if i.user_item_id == user_item_id:
                 in_basket = i.in_basket if patch.in_basket is None else patch.in_basket
+                # An item can only be "done" while it is in the basket; removing it from the basket clears done.
                 done = in_basket and (i.done if patch.done is None else patch.done)
                 items[n] = i.model_copy(update={**fields, "in_basket": in_basket, "done": done})
                 return items[n]
@@ -232,6 +253,7 @@ def delete_item(user_id: UUID, user_item_id: str) -> None:
         return
     from apps.api import databricks_sql as db
 
+    # Basket row first, then the item, so a half-finished delete never leaves a basket entry pointing at nothing.
     for sql in (_REMOVE_FROM_BASKET, _DELETE_ITEM):
         db.execute(sql, user_id=str(user_id), user_item_id=user_item_id)
 
@@ -243,6 +265,7 @@ def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
     from apps.api import databricks_sql as db
     from apps.api.extractors import sniff_media_type
 
+    # The file type comes from sniffing the bytes, not from the client's claimed content type.
     receipt_id = str(uuid.uuid4())
     path = f"{UPLOADS}/{user_id}/{receipt_id}.{_EXT.get(sniff_media_type(image) or '', 'bin')}"
     try:

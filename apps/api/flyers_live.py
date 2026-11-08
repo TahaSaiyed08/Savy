@@ -23,6 +23,8 @@ from shared import flipp
 
 log = logging.getLogger(__name__)
 
+# Timing knobs. A flyer is replaced weekly, but Flipp also fixes prices in place, so everything is re-downloaded
+# once the copy is a day old; between those, an hourly look at Flipp's flyer list catches a store's new flyer.
 ENABLED = os.getenv("REALDEAL_LIVE_FLYERS", "1") != "0"  # "0": canned flyers only (tests, CI, no network)
 DATA = Path(__file__).parent / "data"
 DEFAULT_POSTAL = os.getenv("DEFAULT_POSTAL_CODE", flipp.DEFAULT_POSTAL).replace(" ", "").upper()
@@ -30,6 +32,7 @@ LEGACY_SNAPSHOT = DATA / "flipp_snapshot.json"  # what `make flipp-snapshot` wro
 STALE_AFTER = timedelta(hours=24)
 RETRY_AFTER = timedelta(minutes=10)  # a stale copy that can't be refreshed must not hit Flipp on every request
 CHECK_EVERY = 3600.0  # seconds between looks at Flipp's flyer list
+# Canadian postal codes alternate letter/digit: A1A1A1. Flipp's API wants them without the space.
 _POSTAL = re.compile(r"^[A-Z]\d[A-Z]\d[A-Z]\d$")
 
 
@@ -39,16 +42,17 @@ def normalize(raw: str | None) -> str | None:
     return code if _POSTAL.match(code) else None
 
 
+# One Feed per postal code, held in memory and mirrored to apps/api/data/flipp_<POSTAL>.json so a restart is instant.
 @dataclass
 class Feed:
     postal: str
     rows: list[FlyerItem] = field(default_factory=list)
     flyers: dict[str, int] = field(default_factory=dict)  # store -> id of the Flipp flyer the rows came from
     fetched_at: datetime | None = None
-    refreshing: bool = False
-    tried_at: datetime | None = None
+    refreshing: bool = False  # a download is running, so don't start a second one
+    tried_at: datetime | None = None  # last attempt, successful or not: spaces out retries after a failure
     error: str | None = None
-    pages: dict[str, list[FlyerItem]] = field(default_factory=dict)
+    pages: dict[str, list[FlyerItem]] = field(default_factory=dict)  # page_id -> its tiles, an index for page lookups
     meta: dict[int, dict] = field(default_factory=dict)  # Flipp flyer id -> where its page images are
 
     def load(self, rows: list[FlyerItem], flyers: dict[str, int], fetched_at: datetime,
@@ -60,6 +64,8 @@ class Feed:
         self.meta = meta if meta is not None else self.meta
 
 
+# All feeds, keyed by postal code. The lock guards the dict (and the `refreshing` flag), never a download: holding it
+# across the network would block every request.
 _feeds: dict[str, Feed] = {}
 _lock = threading.Lock()
 
@@ -74,12 +80,15 @@ def _flyer_ids(rows: list[FlyerItem]) -> dict[str, int]:
 
 
 def _read(postal: str) -> Feed:
+    # Reads the saved copy of one feed. Anything wrong with it (missing, corrupt, old format) returns an empty feed that
+    # simply downloads again, so a bad file can never take the API down.
     feed = Feed(postal)
     path = _path(postal) if _path(postal).exists() else (LEGACY_SNAPSHOT if postal == DEFAULT_POSTAL else None)
     if path is None or not path.exists():
         return feed
     try:
         data = json.loads(path.read_text())
+        # One unreadable row is skipped, not fatal: rows are validated on the way in (see FlyerItem's validators).
         rows, bad = [], 0
         for r in data["rows"]:
             try:
@@ -90,6 +99,8 @@ def _read(postal: str) -> Feed:
             log.warning("skipped %d unreadable rows in %s", bad, path)
         saved = data.get("fetched_at")  # the legacy snapshot has none: use the file's age
         fetched = datetime.fromisoformat(saved) if saved else datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        # A copy made by an older parser is still shown right away, but marked as stale so it is rebuilt in the
+        # background with the improved parsing.
         if data.get("parser") != flipp.PARSER_VERSION:  # still served, but counts as stale: downloaded again behind it
             fetched = datetime.min.replace(tzinfo=UTC)
         meta = {int(k): v for k, v in data.get("meta", {}).items()}
@@ -100,6 +111,7 @@ def _read(postal: str) -> Feed:
 
 
 def _save(feed: Feed) -> None:
+    # Everything needed to restart without the network: rows, which flyer each store is on, and where page images live.
     DATA.mkdir(parents=True, exist_ok=True)
     fetched = feed.fetched_at.isoformat() if feed.fetched_at else None
     body = {"postal": feed.postal, "parser": flipp.PARSER_VERSION, "fetched_at": fetched, "flyers": feed.flyers,
@@ -123,6 +135,7 @@ def put(postal: str, rows: list[FlyerItem]) -> None:
 
 
 def ready(postal: str) -> bool:
+    # "Ready" means we can answer: either there are rows, or a download already finished (even finding nothing).
     f = feed(postal)
     return bool(f.rows) or (f.fetched_at is not None and not f.refreshing)
 
@@ -132,6 +145,7 @@ def _spawn(postal: str) -> None:
 
 
 def _wants_refresh(f: Feed) -> bool:
+    # Due when never downloaded, or a day old with no attempt in the last 10 minutes.
     if f.refreshing:
         return False
     if f.fetched_at is None:
@@ -143,11 +157,14 @@ def _wants_refresh(f: Feed) -> bool:
 def items(postal: str) -> list[FlyerItem]:
     """Listings still valid today near this postal code. Empty while its first fetch runs; a copy that has gone stale
     (say, the API was off for days) is served as it is while a fresh one downloads."""
+    # This is the read path every request takes. It never waits: it starts a background download when one is due, and
+    # returns what it has right now.
     f = feed(postal)
     if _wants_refresh(f):
         f.tried_at = datetime.now(UTC)
         _spawn(postal)
     today = date.today()
+    # Hide expired listings. With no explicit end date, assume the flyer runs for its week.
     return [r for r in f.rows if (r.valid_to or r.week_start + timedelta(days=6)) >= today]
 
 
@@ -170,6 +187,8 @@ def sibling_pages(tile: FlyerItem) -> list[str]:
     return []
 
 
+# Real page images. Page ids look like flipp-<flyer id>-<page number>. Flipp doesn't store a page as one file, so it
+# is assembled from a grid of small tiles and cached on disk (see shared/flipp.render_page).
 _PAGE_ID = re.compile(r"flipp-(\d+)-(\d+)")
 _page_locks: dict[str, threading.Lock] = {}
 
@@ -193,6 +212,7 @@ def page_aspect(page_id: str) -> float | None:
     found = _page_source(page_id)
     if not found:
         return None
+    # The page's rectangle in Flipp's coordinate space, which is also the space the tile boxes were measured in.
     left, right, top, bottom = found[0]["pages"][str(found[1])]
     return round((right - left) / (top - bottom), 4)
 
@@ -209,13 +229,14 @@ def page_jpeg(page_id: str) -> bytes | None:
     path = _page_file(page_id)
     with _lock:
         lock = _page_locks.setdefault(page_id, threading.Lock())
+    # One lock per page: if two people open the same page together, the second waits and reuses the first's file.
     with lock:  # two people opening the same page download its tiles once
         if path.exists():
             return path.read_bytes()
         jpeg = flipp.render_page(*found)
         if jpeg:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
+            tmp = path.with_suffix(".tmp")  # write-then-rename, so a half-written image is never served
             tmp.write_bytes(jpeg)
             tmp.replace(path)
         return jpeg
@@ -248,6 +269,8 @@ def refresh(postal: str, force: bool = False) -> None:
 
     The saved copy, its time and Databricks are only touched when something actually changed: a new flyer, a store
     whose flyer ended, or names the refiner has just labelled. An hourly check that finds nothing does nothing."""
+    # The refresh in four moves: (1) ask Flipp which flyers are current, (2) re-download only the stores whose flyer
+    # changed, (3) save and publish if anything changed, (4) hand names to the AI refiner and Databricks.
     f = feed(postal)
     with _lock:
         if f.refreshing:
@@ -257,10 +280,12 @@ def refresh(postal: str, force: bool = False) -> None:
     try:
         listed = flipp.grocery_flyers_for(postal)
         age = datetime.now(UTC) - f.fetched_at if f.fetched_at else None
+        # Re-download everything once a day (prices get corrected in place), or on demand; otherwise only what changed.
         everything = force or age is None or age > STALE_AFTER
         old = {s: [r for r in f.rows if r.store == s] for s in f.flyers}
         rows, flyers, meta, downloaded = [], {}, {}, False
         for store, flyer in listed.items():
+            # Unchanged store: reuse its rows as they are (the cheap path that runs every hour).
             if not everything and f.flyers.get(store) == flyer["id"] and old.get(store) and flyer["id"] in f.meta:
                 rows += old[store]
                 flyers[store] = flyer["id"]
@@ -269,6 +294,7 @@ def refresh(postal: str, force: bool = False) -> None:
             try:
                 fetched = flipp.fetch_flyer(flyer, store)
             except Exception:
+                # One store failing must not lose the others, or its own old rows: keep them and carry on.
                 log.warning("couldn't fetch %s near %s; keeping what we had", store, postal, exc_info=True)
                 if old.get(store):
                     rows += old[store]
@@ -289,11 +315,12 @@ def refresh(postal: str, force: bool = False) -> None:
             _save(f)
             _prune_pages()
             log.info("flyers near %s: %d listings from %s", postal, len(rows), ", ".join(flyers))
+        # Publishing before the AI step matters: people see new flyers immediately, and the slower naming follows.
         f.error = None
         labelled = _label(f)
         if changed or labelled:
             _sync(postal, f.rows, f.fetched_at)
-    except Exception as e:
+    except Exception as e:  # never raise out of a background thread: record why, keep serving the previous copy
         f.error = str(e) or type(e).__name__
         if f.fetched_at is None:
             f.fetched_at = datetime.now(UTC)  # nothing to show, but don't retry on every request; the next check will
@@ -306,6 +333,7 @@ def _label(f: Feed) -> bool:
     """Have the AI refiner name any listings it hasn't yet. True when it labelled some, which are then saved."""
     if not refine.enabled() or not any(r.category is None for r in f.rows):
         return False
+    # Only rows without a category are sent, and answers are cached on disk, so this is cheap after the first run.
     refined = refine.apply(f.rows)
     if all(a.category == b.category for a, b in zip(refined, f.rows, strict=True)):
         return False  # the model had nothing for them (down, or out of quota): they are asked again next time
@@ -319,6 +347,7 @@ def _sync(postal: str, rows: list[FlyerItem], fetched_at: datetime | None) -> No
     if not databricks_sync.enabled() or fetched_at is None:
         return
 
+    # Runs on its own thread: the warehouse can take a minute to wake, and a refresh shouldn't wait for it.
     def push() -> None:
         try:
             databricks_sync.push(postal, rows, fetched_at)
@@ -340,6 +369,7 @@ async def keep_fresh() -> None:
     """Runs for the life of the API: warm the default postal code at boot, then look for new flyers hourly."""
     if not ENABLED:
         return
+    # to_thread keeps the blocking disk and network work off the event loop that serves requests.
     await asyncio.to_thread(items, DEFAULT_POSTAL)  # reads the saved copy (or starts the first fetch)
     while True:
         await asyncio.to_thread(tick)  # a copy saved before the API stopped may be a week behind

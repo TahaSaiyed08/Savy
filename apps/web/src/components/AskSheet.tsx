@@ -9,6 +9,13 @@ const EXAMPLES = ["What's the cheapest milk this week?", "Which store has the ch
 
 type Turn = { question: string; answer?: Schemas["AskResponse"]; error?: string };
 
+/** Genie writes **bold** in its answers; show it as bold, not as literal asterisks. Unpaired asterisks are left alone. */
+function Rich({ text }: { text: string }) {
+  const parts = text.split("**");
+  if (parts.length % 2 === 0) return <>{text}</>;
+  return <>{parts.map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part))}</>;
+}
+
 /** Plain-language questions about this week's flyers, answered by Databricks Genie. */
 export function AskSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [text, setText] = useState("");
@@ -71,8 +78,8 @@ export function AskSheet({ open, onClose }: { open: boolean; onClose: () => void
             {t.error && <p className="rounded-[16px] bg-elevated p-3.5 text-[15px] text-destructive">{t.error}</p>}
             {t.answer && (
               <div className="flex flex-col gap-3 rounded-[16px] bg-elevated p-3.5">
-                {t.answer.answer && <p className="text-[15px]">{t.answer.answer}</p>}
-                {!t.answer.answer && t.answer.description && <p className="text-[15px]">{t.answer.description}</p>}
+                {t.answer.answer && <p className="text-[15px]"><Rich text={t.answer.answer} /></p>}
+                {!t.answer.answer && t.answer.description && <p className="text-[15px]"><Rich text={t.answer.description} /></p>}
                 {t.answer.rows.length > 0 && (
                   <div className="-mx-1 overflow-x-auto">
                     <table className="w-full min-w-max border-collapse text-left text-[13px] tabular-nums">
