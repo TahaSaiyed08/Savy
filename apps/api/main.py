@@ -12,7 +12,7 @@ from uuid import UUID
 import anthropic
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response, UploadFile
 
-from apps.api import flyers_live, genie, logic, store, stt
+from apps.api import flyers_live, genie, logic, receipts, store, stt
 from apps.api.extractors import ExtractionServiceError, Extractor, get_extractor
 from apps.api.models import (
     AskRequest,
@@ -181,7 +181,7 @@ def health() -> dict:
 @app.post("/intake/receipt", dependencies=[Depends(rate_limit)])
 def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext, background: BackgroundTasks) -> IntakeResponse:
     image = _read(file, "image/")
-    x = _extract(ext, "receipt", image=image, media_type=file.content_type)
+    x = receipts.drop_produce_quantity(_extract(ext, "receipt", image=image, media_type=file.content_type))
     background.add_task(store.save_receipt, user_id, image, x)  # after the response, so intake isn't slower
     return _respond(x)
 
