@@ -347,6 +347,49 @@ def test_sweep_does_not_mark_done_from_a_cached_item_scan(monkeypatch):
     assert store._swept_flyers == "Save-On-Foods=2026-11-05:276:1"  # new flyers not marked swept
 
 
+def test_every_current_store_gets_matched_via_search_or_fallback(monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import UserItem
+
+    # Global top-N is all Save-On; No Frills is in the index (store-filtered search finds it); T&T isn't synced yet.
+    by_store = {None: [["sof1", None, 0.9], ["sof2", None, 0.85]], "No Frills": [["nf1", None, 0.8]], "T&T": []}
+    searches = []
+
+    def query_index(**kw):
+        s = json.loads(kw["filters_json"])["store"][0] if "filters_json" in kw else None
+        searches.append(s)
+        return SimpleNamespace(result=SimpleNamespace(data_array=by_store[s]))
+
+    current = [{"item_id": "sof1", "store": "Save-On-Foods"}, {"item_id": "sof2", "store": "Save-On-Foods"},
+               {"item_id": "nf1", "store": "No Frills"}, {"item_id": "tt1", "store": "T&T"}]
+    like_stores, writes = [], []
+
+    def query(sql, **p):
+        if "inline" in sql:  # LIKE fallback
+            rows = json.loads(p["rows"])
+            like_stores.extend(r["stores"] for r in rows)
+            return [{"user_item_id": rows[0]["user_item_id"], "item_id": "tt1", "brand": None}]
+        return current
+
+    monkeypatch.setattr(databricks_sql, "_client",
+                        lambda: SimpleNamespace(vector_search_indexes=SimpleNamespace(query_index=query_index)))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    store._match_and_store([UserItem(user_item_id=f"u{n}", user_id=uuid.uuid4(), item="yogurt", source="manual",
+                                     added_at=datetime.now(UTC)) for n in (1, 2)])
+
+    from collections import Counter
+    # Per item: one global search; per store: one probe; per item again only for stores the index holds.
+    # Save-On needed no top-up, and unsynced T&T is probed once, not searched per item.
+    assert Counter(searches) == {None: 2, "No Frills": 3, "T&T": 1}
+    assert like_stores == [["T&T"], ["T&T"]]  # fallback only for the store the index can't answer
+    saved = {(m["user_item_id"], m["flyer_item_id"]) for m in json.loads(writes[0]["rows"])}
+    assert saved == {(u, f) for u in ("u1", "u2") for f in ("sof1", "sof2", "nf1")} | {("u1", "tt1")}
+
+
 def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):
     from apps.api import store
 

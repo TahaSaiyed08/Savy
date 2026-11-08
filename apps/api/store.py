@@ -23,7 +23,7 @@ _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp
 _ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
               "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>")
 _MATCH_ROWS = "ARRAY<STRUCT<user_item_id: STRING, flyer_item_id: STRING, match_score: DOUBLE>>"
-_LIKE_ROWS = "ARRAY<STRUCT<user_item_id: STRING, brand: STRING, item: STRING>>"
+_LIKE_ROWS = "ARRAY<STRUCT<user_item_id: STRING, brand: STRING, item: STRING, stores: ARRAY<STRING>>>"
 
 
 def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **fields) -> UserItem:
@@ -46,20 +46,43 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
 
 
 def _match_and_store(items: list[UserItem]) -> None:
-    """Top-3 per store per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
+    """Top-3 per current-flyer store per item, brand rule + threshold, one MERGE.
 
-    Matches land in user_item_matches, which my_deals reads.
+    AI Search first; any store it has no current rows for (one store's items crowded out of the global top-N, or
+    the index not yet synced with that store) gets a store-filtered search, then the LIKE fallback for just that
+    store. Items the index can't answer at all use the LIKE fallback for every store. Matches land in
+    user_item_matches, which my_deals reads.
     """
     from apps.api import databricks_sql as db
 
+    ids = [u.user_item_id for u in items]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        found = dict(zip((u.user_item_id for u in items), pool.map(_search, items), strict=True))
-    if any(found.values()):  # the index holds every week, so keep only current-flyer hits
-        current = _current_flyers()
-        found = {k: None if v is None else _current_top(v, current) for k, v in found.items()}
-    missed = [u for u in items if found[u.user_item_id] is None]
-    if missed:
-        found.update(_like_fallback(missed))
+        found = dict(zip(ids, pool.map(lambda u: _search(logic.label(u)), items), strict=True))
+        like: dict[str, list[str] | None] = {k: None for k, v in found.items() if v is None}  # None = every store
+        if len(like) < len(items):  # the index answered: keep current-flyer hits and fill in missing stores
+            current = _current_flyers()
+            stores = sorted(set(current.values()))
+            found = {k: None if v is None else _current_top(v, current) for k, v in found.items()}
+            gaps = [(u, s) for u in items if found[u.user_item_id] is not None
+                    for s in stores if s not in {current[h[0]] for h in found[u.user_item_id]}]
+            # Whether the index has a store's current flyer is the same for every item: probe each store once,
+            # so stores it hasn't synced yet go straight to LIKE instead of one empty search per item.
+            gap_stores = sorted({s for _, s in gaps})
+            probes = pool.map(lambda s: _search(_PROBE_TEXT, s), gap_stores)
+            indexed = {s for s, hits in zip(gap_stores, probes, strict=True) if _current_top(hits or [], current)}
+            for u, s in gaps:
+                if s not in indexed:
+                    like.setdefault(u.user_item_id, []).append(s)
+            gaps = [(u, s) for u, s in gaps if s in indexed]
+            for (u, s), hits in zip(gaps, pool.map(lambda g: _search(logic.label(g[0]), g[1]), gaps), strict=True):
+                kept = _current_top(hits or [], current)
+                if kept:
+                    found[u.user_item_id] += kept
+                else:  # nothing current for this item at this store in the index
+                    like.setdefault(u.user_item_id, []).append(s)
+    if like:
+        for k, hits in _like_fallback([u for u in items if u.user_item_id in like], like).items():
+            found[k] = (found.get(k) or []) + hits
     matches = [
         {"user_item_id": u.user_item_id, "flyer_item_id": item_id, "match_score": float(score)}
         for u in items for item_id, brand, score in found.get(u.user_item_id) or []
@@ -143,14 +166,18 @@ def rematch_if_new_week() -> int:
     return len(items)
 
 
-def _search(u: UserItem) -> list[tuple] | None:
-    """AI Search candidates as (item_id, brand, score) across all weeks, or None if the index is unavailable."""
+def _search(text: str, store: str | None = None) -> list[tuple] | None:
+    """AI Search candidates as (item_id, brand, score) across all weeks, or None if the index is unavailable.
+
+    With store, only that store's rows (a top-up when the global candidates leave a store out).
+    """
     from apps.api import databricks_sql as db
 
     try:
         r = db._client().vector_search_indexes.query_index(
-            index_name=INDEX, columns=["item_id", "brand", "item", "variant"],
-            query_text=logic.label(u), num_results=SEARCH_CANDIDATES,
+            index_name=INDEX, columns=["item_id", "brand", "item", "variant"], query_text=text,
+            num_results=STORE_CANDIDATES if store else SEARCH_CANDIDATES,
+            **({"filters_json": json.dumps({"store": [store]})} if store else {}),
         )
     except Exception as e:
         log.warning("AI Search unavailable, falling back to LIKE: %s", e)
@@ -160,7 +187,9 @@ def _search(u: UserItem) -> list[tuple] | None:
 
 # The index covers every week and can't filter on week_start, so over-fetch and keep current-flyer rows.
 SEARCH_CANDIDATES = 50
+STORE_CANDIDATES = 20
 TOP_PER_STORE = 3
+_PROBE_TEXT = "grocery"  # any text: a store probe only checks whether the index holds that store's current rows
 
 
 def _current_flyers() -> dict[str, str]:
@@ -183,17 +212,22 @@ def _current_top(hits: list[tuple], current: dict[str, str]) -> list[tuple]:
     return kept
 
 
-def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
-    """One query for all items: top-3 per store from each store's current flyer, same brand ranked first."""
+def _like_fallback(items: list[UserItem], stores: dict[str, list[str] | None]) -> dict[str, list[tuple]]:
+    """One query for all items: top-3 per store from current flyers, same brand ranked first.
+
+    stores maps each item to the stores to search, or None for every store.
+    """
     from apps.api import databricks_sql as db
 
     rows = db.query(
         f"WITH u AS (SELECT inline(from_json(:rows, '{_LIKE_ROWS}'))) "
         f"SELECT u.user_item_id, f.item_id, f.brand FROM u JOIN {_CURRENT_FLYERS} f "
         "ON lower(f.item) LIKE concat('%', lower(u.item), '%') "
+        "AND (u.stores IS NULL OR array_contains(u.stores, f.store)) "
         "QUALIFY row_number() OVER (PARTITION BY u.user_item_id, f.store "
         "ORDER BY coalesce(lower(f.brand) = lower(u.brand), false) DESC, f.item_id) <= 3",
-        rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item} for u in items]),
+        rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item,
+                          "stores": stores.get(u.user_item_id)} for u in items]),
         fresh=True,
     )
     out: dict[str, list[tuple]] = {u.user_item_id: [] for u in items}
