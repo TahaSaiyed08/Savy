@@ -305,14 +305,14 @@ def test_patch_and_basket_statements(monkeypatch):
         assert sql.count("user_id = :user_id") >= 1 and p["user_id"] == str(uid) and p["user_item_id"] == "u1"
     (update, up), (insert, _) = writes
     assert update.startswith("UPDATE user_items SET") and up["brand"] is None and up["size_qty"] == 2
-    assert "variant" not in up  # fields not sent are left alone
+    assert up["set_brand"] and up["set_size_qty"] and not up["set_variant"]  # fields not sent are left alone
     assert "INSERT INTO basket_items" in insert and "NOT EXISTS" in insert
     writes.clear()
     store.update_item(uid, "u1", ItemPatch(in_basket=False))
     assert len(writes) == 1 and writes[0][0].startswith("DELETE FROM basket_items")
     writes.clear()
     store.delete_item(uid, "u1")
-    assert [s.split()[2] for s, _ in writes] == ["basket_items", "user_items"]
+    assert [sql.split()[2] for sql, _ in writes] == ["basket_items", "user_items"]
     assert all("user_id = :user_id" in s and p["user_id"] == str(uid) for s, p in writes)
 
 

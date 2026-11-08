@@ -19,13 +19,36 @@ log = logging.getLogger(__name__)
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
 UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
-_MINE = "WHERE user_id = :user_id AND user_item_id = :user_item_id"  # every per-item write is scoped to its owner
-_ITEM_COLS = ("user_item_id", "user_id", "brand", "item", "variant", "size_qty", "size_unit", "source", "added_at",
-              "last_bought_at")
 _EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
-# Batches travel as one JSON string parameter and are expanded with inline(from_json(...)) in SQL.
-_ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
-              "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>")
+
+# Every statement is a fixed literal; all values travel as named parameters. Per-item writes are scoped to their
+# owner (user_id = :user_id AND user_item_id = :user_item_id).
+# EXISTS, not a join: two racing "Move to Basket" taps can leave duplicate basket rows. Named columns, not u.*:
+# catalogs that ran PR #10's ALTER also have an in_basket column on user_items.
+_LIST_ITEMS = (
+    "SELECT u.user_item_id, u.user_id, u.brand, u.item, u.variant, u.size_qty, u.size_unit, u.source, u.added_at, "
+    "u.last_bought_at, EXISTS (SELECT 1 FROM basket_items b WHERE b.user_item_id = u.user_item_id "
+    "AND b.user_id = u.user_id) AS in_basket FROM user_items u WHERE u.user_id = :user_id ORDER BY u.added_at DESC")
+_ADD_USER = ("MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
+             "WHEN NOT MATCHED THEN INSERT (user_id, created_at) VALUES (s.user_id, current_timestamp())")
+# The batch travels as one JSON string parameter and is expanded with inline(from_json(...)).
+_ADD_ITEMS = (
+    "INSERT INTO user_items (user_item_id, user_id, brand, item, variant, size_qty, size_unit, source, added_at, "
+    "last_bought_at) SELECT user_item_id, user_id, brand, item, variant, size_qty, size_unit, source, "
+    "CAST(added_at AS TIMESTAMP), CAST(last_bought_at AS TIMESTAMP) FROM (SELECT inline(from_json(:rows, "
+    "'ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
+    "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>')))")
+# Partial update with a fixed statement: set_<field> says whether the client sent that field (it may be sent as null).
+_UPDATE_ITEM = (
+    "UPDATE user_items SET brand = IF(:set_brand, :brand, brand), item = IF(:set_item, :item, item), "
+    "variant = IF(:set_variant, :variant, variant), size_qty = IF(:set_size_qty, CAST(:size_qty AS DOUBLE), size_qty), "
+    "size_unit = IF(:set_size_unit, :size_unit, size_unit) WHERE user_id = :user_id AND user_item_id = :user_item_id")
+_ADD_TO_BASKET = (
+    "INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp() WHERE EXISTS (SELECT 1 FROM "
+    "user_items WHERE user_id = :user_id AND user_item_id = :user_item_id) AND NOT EXISTS (SELECT 1 FROM "
+    "basket_items WHERE user_id = :user_id AND user_item_id = :user_item_id)")
+_REMOVE_FROM_BASKET = "DELETE FROM basket_items WHERE user_id = :user_id AND user_item_id = :user_item_id"
+_DELETE_ITEM = "DELETE FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id"
 
 
 def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **fields) -> UserItem:
@@ -115,11 +138,7 @@ def list_items(user_id: UUID, fresh: bool = False) -> list[UserItem]:
         return _mock_items(user_id)
     from apps.api import databricks_sql as db
 
-    # EXISTS, not a join: two racing "Move to Basket" taps can leave duplicate basket rows.
-    # Named columns, not u.*: catalogs that ran PR #10's ALTER also have an in_basket column on user_items.
-    rows = db.query(f"SELECT {', '.join('u.' + c for c in _ITEM_COLS)}, EXISTS (SELECT 1 FROM basket_items b WHERE "
-                    "b.user_item_id = u.user_item_id AND b.user_id = u.user_id) AS in_basket FROM user_items u "
-                    "WHERE u.user_id = :user_id ORDER BY u.added_at DESC", fallback=not fresh, user_id=str(user_id))
+    rows = db.query(_LIST_ITEMS, fallback=not fresh, user_id=str(user_id))
     return [UserItem(**r) for r in rows]
 
 
@@ -132,17 +151,8 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
 
     rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket"}), "user_id": str(u.user_id)} for u in new])
     with ThreadPoolExecutor(max_workers=2) as pool:  # fixed statement count however many items
-        writes = [
-            pool.submit(db.execute,
-                        "MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
-                        "WHEN NOT MATCHED THEN INSERT (user_id, created_at) VALUES (s.user_id, current_timestamp())",
-                        user_id=str(user_id)),
-            pool.submit(db.execute,
-                        "INSERT INTO user_items (user_item_id, user_id, brand, item, variant, size_qty, size_unit, "
-                        "source, added_at, last_bought_at) SELECT user_item_id, user_id, brand, item, variant, "
-                        "size_qty, size_unit, source, CAST(added_at AS TIMESTAMP), CAST(last_bought_at AS TIMESTAMP) "
-                        f"FROM (SELECT inline(from_json(:rows, '{_ITEM_ROWS}')))", rows=rows),
-        ]
+        writes = [pool.submit(db.execute, _ADD_USER, user_id=str(user_id)),
+                  pool.submit(db.execute, _ADD_ITEMS, rows=rows)]
         for w in writes:
             w.result()  # a failed write must surface
     return new
@@ -161,15 +171,14 @@ def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch) -> UserItem 
         return None
     from apps.api import databricks_sql as db
 
-    ids, mine = dict(user_id=str(user_id), user_item_id=user_item_id), _MINE
-    if fields:  # keys come from _EDITABLE, never from the client
-        db.execute(f"UPDATE user_items SET {', '.join(f'{k} = :{k}' for k in fields)} {mine}", **fields, **ids)
+    ids = dict(user_id=str(user_id), user_item_id=user_item_id)
+    if fields:
+        db.execute(_UPDATE_ITEM, **ids, **{k: fields.get(k) for k in _EDITABLE},
+                   **{f"set_{k}": k in fields for k in _EDITABLE})
     if patch.in_basket:
-        db.execute("INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp() WHERE "
-                   f"EXISTS (SELECT 1 FROM user_items {mine}) "
-                   f"AND NOT EXISTS (SELECT 1 FROM basket_items {mine})", **ids)
+        db.execute(_ADD_TO_BASKET, **ids)
     elif patch.in_basket is False:
-        db.execute(f"DELETE FROM basket_items {mine}", **ids)
+        db.execute(_REMOVE_FROM_BASKET, **ids)
     return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
 
 
@@ -180,8 +189,8 @@ def delete_item(user_id: UUID, user_item_id: str) -> None:
         return
     from apps.api import databricks_sql as db
 
-    for table in ("basket_items", "user_items"):
-        db.execute(f"DELETE FROM {table} {_MINE}", user_id=str(user_id), user_item_id=user_item_id)
+    for sql in (_REMOVE_FROM_BASKET, _DELETE_ITEM):
+        db.execute(sql, user_id=str(user_id), user_item_id=user_item_id)
 
 
 def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
