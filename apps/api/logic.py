@@ -55,7 +55,8 @@ def size_of(x: UserItem | FlyerItem) -> Size | None:
 def missing(u: UserItem) -> list[str]:
     """Fields the user still has to fill in before this item can match anything.
 
-    None for an item added from a flyer: its fields are the listing's, so a blank one means the flyer has none too.
+    Empty for an item added from a flyer: its fields are the listing's, so a blank one means the flyer has none too.
+    The API only keeps source="flyer" on items that are a listing (is_listing); clients can't claim it.
     """
     if u.source == "flyer":
         return []
@@ -63,7 +64,16 @@ def missing(u: UserItem) -> list[str]:
 
 
 def same_item(u: UserItem, f: FlyerItem) -> bool:
-    if missing(u) or any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
+    return not missing(u) and _identical(u, f)
+
+
+def is_listing(x: UserItem | ExtractedItem, flyers: list[FlyerItem]) -> bool:
+    """Whether x really is a current listing. Only then may it be a source="flyer" item, which skips missing()."""
+    return any(_identical(x, f) for f in flyers)
+
+
+def _identical(u: UserItem | ExtractedItem, f: FlyerItem) -> bool:
+    if any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
         return False
     want = size_of(u)
     if want is None:  # only a flyer-added item gets here: its size is its listing's, and that listing has none

@@ -817,3 +817,36 @@ def test_listings_link_to_the_original_flyer_on_flipp_only_when_they_came_from_t
     assert (canned.flyer_url, canned.item_url, canned.store_url) == (None, None, None)
     deal = logic.deals_for([_want()], [_flyer(item_id="flipp-7", page_id="flipp-70-1")])[0]
     assert (deal.flyer_url, deal.item_url) == ("https://flipp.com/en-ca/flyer/70", "https://flipp.com/en-ca/item/7")
+
+
+def test_client_cannot_claim_flyer_source_for_something_no_flyer_lists():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    body = {"source": "flyer", "items": [{"item": "milk", "confidence": 1}]}
+    (saved,) = c.post("/items", headers=h, json=body).json()
+    assert saved["source"] == "manual" and saved["missing"] == ["brand", "variant", "size"] and not saved["cheapest"]
+
+
+def test_real_flyer_item_keeps_its_source_until_edited_away_from_the_listing():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    listing = {"brand": "Bertolli", "item": "olive oil", "variant": "extra virgin", "size_qty": 1000, "size_unit": "ml"}
+    (saved,) = c.post("/items", headers=h, json={"source": "flyer", "items": [{**listing, "confidence": 1}]}).json()
+    assert saved["source"] == "flyer" and saved["cheapest"]["store"] == "Safeway"
+
+    url = f"/items/{saved['user_item_id']}"
+    assert c.patch(url, headers=h, json=listing).json()["source"] == "flyer"  # re-saved unchanged
+    assert c.patch(url, headers=h, json={"in_basket": True}).json()["source"] == "flyer"  # not an identity edit
+
+    edited = c.patch(url, headers=h, json={"brand": None, "variant": None, "size_qty": None, "size_unit": None}).json()
+    assert edited["source"] == "manual" and edited["missing"] == ["brand", "variant", "size"] and not edited["cheapest"]
+
+
+def test_flyers_down_means_a_flyer_claim_is_not_trusted(monkeypatch):
+    from apps.api import store
+
+    def down(postal=None):
+        raise RuntimeError("warehouse down")
+
+    monkeypatch.setattr(store, "flyer_items", down)
+    h = {"X-User-Id": str(uuid.uuid4())}
+    r = c.post("/items", headers=h, json={"source": "flyer", "items": [{"item": "milk", "confidence": 1}]})
+    assert r.status_code == 200 and r.json()[0]["source"] == "manual"

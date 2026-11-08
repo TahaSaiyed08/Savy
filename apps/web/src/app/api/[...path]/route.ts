@@ -90,11 +90,12 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
   const problem = passcodeProblem(passcode);
   if (problem) return Response.json({ detail: problem }, { status: 503 });
   const ip = visitorIp(req.headers);
+  // Before the passcode is checked: a locked-out guesser must get 429 even for the right one.
+  if (req.headers.has(PASSCODE_HEADER) && tooManyFailures(ip)) {
+    return Response.json({ detail: "Too many wrong passcodes" }, { status: 429 });
+  }
   if (!unlocked(req.headers, req.cookies.get(PASSCODE_COOKIE)?.value, passcode!)) {
-    if (req.headers.has(PASSCODE_HEADER)) {
-      if (tooManyFailures(ip)) return Response.json({ detail: "Too many wrong passcodes" }, { status: 429 });
-      recordFailure(ip);
-    }
+    if (req.headers.has(PASSCODE_HEADER)) recordFailure(ip);
     return Response.json({ detail: "Locked: open /unlock on this device and enter the demo passcode" },
                          { status: 401 });
   }

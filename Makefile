@@ -5,6 +5,10 @@ setup:            ## install Python (uv) and web (npm) dependencies
 	npm --prefix apps/web ci
 	@test -f .env || cp .env.example .env
 
+# Loopback by default: the tunnel connects locally, and a direct LAN client could forge the visitor-IP headers.
+# Testing from another device on a trusted network: make dev WEB_HOST=0.0.0.0
+WEB_HOST ?= 127.0.0.1
+
 dev:              ## run API on :8000 and PWA on :3000 together; Ctrl-C stops both
 	@trap 'kill 0' INT TERM EXIT; $(MAKE) api & $(MAKE) web & wait
 
@@ -12,7 +16,7 @@ api:
 	uv run --env-file .env uvicorn apps.api.main:app --reload --host 0.0.0.0 --port 8000
 
 web:
-	npm --prefix apps/web run dev -- --hostname 0.0.0.0
+	npm --prefix apps/web run dev -- --hostname $(WEB_HOST)
 
 tunnel:           ## HTTPS URL for your phone (run alongside make dev; needs: brew install cloudflared)
 	cloudflared tunnel --no-autoupdate --url http://localhost:3000
