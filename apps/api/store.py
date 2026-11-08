@@ -137,6 +137,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
 
 
 def page_tiles(page_id: str) -> list[FlyerItem]:
+    # Every tile on one flyer page: what the Price Match screen draws its highlight from.
     if MOCK and flyers_live.ENABLED:
         return flyers_live.page(page_id)  # page ids are globally unique, so no postal code is needed
     return [f for f in flyer_items() if f.page_id == page_id]
@@ -168,6 +169,8 @@ def page_image(path: str) -> bytes | None:
 
 
 def list_items(user_id: UUID, fresh: bool = False, postal: str | None = None) -> list[UserItem]:
+    # `fresh` matters because the SQL layer can fall back to its last good answer if the warehouse is slow; right after
+    # a write that would show stale data, so writes read back with fresh=True.
     """fresh=True right after a write: never served from the last-good cache."""
     if MOCK:
         return _mock_items(user_id, postal)
@@ -178,6 +181,7 @@ def list_items(user_id: UUID, fresh: bool = False, postal: str | None = None) ->
 
 
 def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[UserItem]:
+    # Ids and timestamps are made here on the server, never trusted from the client.
     new = [_new_item(user_id, req.source, req.bought_at, **i.model_dump(include=set(_EDITABLE))) for i in req.items]
     if MOCK:
         _mock_items(user_id, postal)[:0] = new
@@ -186,6 +190,8 @@ def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[
 
     rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket", "done"}), "user_id": str(u.user_id)}
                        for u in new])
+    # Two statements however many items: register the user if new, and insert every item as one batch (as JSON that
+    # the warehouse expands into rows). They run side by side to save a round trip.
     with ThreadPoolExecutor(max_workers=2) as pool:  # fixed statement count however many items
         writes = [pool.submit(db.execute, _ADD_USER, user_id=str(user_id)),
                   pool.submit(db.execute, _ADD_ITEMS, rows=rows)]
@@ -196,12 +202,15 @@ def add_items(user_id: UUID, req: SaveItems, postal: str | None = None) -> list[
 
 def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch, postal: str | None = None) -> UserItem | None:
     """Edit fields and/or move to or from the basket. None if the user has no such item."""
+    # Only fields the client sent, and only editable ones. In mock mode the basket and "done" flags live on the item;
+    # in Databricks mode they are rows in a separate basket_items table.
     fields = {k: getattr(patch, k) for k in patch.model_fields_set if k in _EDITABLE}
     if MOCK:
         items = _mock_items(user_id, postal)
         for n, i in enumerate(items):
             if i.user_item_id == user_item_id:
                 in_basket = i.in_basket if patch.in_basket is None else patch.in_basket
+                # An item can only be "done" while it is in the basket; removing it from the basket clears done.
                 done = in_basket and (i.done if patch.done is None else patch.done)
                 items[n] = i.model_copy(update={**fields, "in_basket": in_basket, "done": done})
                 return items[n]
@@ -242,6 +251,7 @@ def delete_item(user_id: UUID, user_item_id: str) -> None:
         return
     from apps.api import databricks_sql as db
 
+    # Basket row first, then the item, so a half-finished delete never leaves a basket entry pointing at nothing.
     for sql in (_REMOVE_FROM_BASKET, _DELETE_ITEM):
         db.execute(sql, user_id=str(user_id), user_item_id=user_item_id)
 
@@ -253,6 +263,7 @@ def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
     from apps.api import databricks_sql as db
     from apps.api.extractors import sniff_media_type
 
+    # The file type comes from sniffing the bytes, not from the client's claimed content type.
     receipt_id = str(uuid.uuid4())
     path = f"{UPLOADS}/{user_id}/{receipt_id}.{_EXT.get(sniff_media_type(image) or '', 'bin')}"
     try:
