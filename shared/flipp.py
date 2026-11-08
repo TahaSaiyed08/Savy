@@ -322,12 +322,14 @@ def fetch_flyer(flyer: dict, store: str) -> dict:
     The details are fetched WORKERS at a time, so a 300-item flyer takes seconds, not minutes.
     Returns {"week": date, "rows": list[dict], "item_count": int, "sized_count": int}.
     """
+    # Two kinds of requests: one for the flyer's tile list, then one per tile for its detail, in parallel batches.
     week = date.fromisoformat(flyer["valid_from"][:10])
     detail = get_flyer_detail(flyer["id"])
     raw_items = detail.get("items", [])
     pages = sorted(detail.get("pages", []), key=lambda p: p["left"])
     products = [it for it in raw_items if it.get("display_type") == 1]  # not banners or page furniture
 
+    # A tile whose detail can't be fetched is skipped, not guessed: without it we can't tell a "2 for" price.
     def one(it: dict) -> FlyerItem | None:
         try:
             item_detail = get_item_detail(it["id"])
@@ -354,6 +356,8 @@ def flyer_meta(flyer: dict, pages: list[dict]) -> dict:
     }
 
 
+# Page images, step 1 of 2: plan. A flyer image is a pyramid of 256 px tiles at several zoom levels. plan_page picks
+# the level and the tile range that cover one page; render_page fetches and stitches them.
 class PagePlan(NamedTuple):
     level: int  # index into the flyer's resolutions; 0 is the smallest image
     scale: float  # full-size pixels per pixel at this level
@@ -372,11 +376,14 @@ def plan_page(width: float, height: float, resolutions: list[float], rect: list[
     """
     left, right, top, bottom = rect
     pw, ph = right - left, top - bottom
+    # Walk from the sharpest level down and stop at the first one small enough to keep the page light.
     level = 0
     for z in range(len(resolutions) - 1, -1, -1):  # sharpest first
         if pw * ph / resolutions[z] ** 2 <= PAGE_MAX_PIXELS and ph / resolutions[z] <= PAGE_MAX_HEIGHT:
             level = z
             break
+    # Convert the page rectangle from full-size pixels to this level's pixels, then to tile columns and rows. `pad`
+    # accounts for the partial tile row, which sits at the top because rows are counted from the bottom.
     scale = resolutions[level]
     level_h = math.ceil(height / scale)
     nrows = math.ceil(level_h / TILE)
@@ -389,6 +396,8 @@ def plan_page(width: float, height: float, resolutions: list[float], rect: list[
     return PagePlan(level, scale, (x0, y0, x1, y1), cols, rows, nrows, pad)
 
 
+# Step 2 of 2: render. Missing tiles are normal (Flipp never cuts empty edge tiles), so they stay white rather than
+# failing the whole page.
 def _tile(url: str) -> bytes | None:
     """One image tile, or None when it isn't there (an edge tile Flipp never cut) or can't be fetched."""
     try:
@@ -415,6 +424,7 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
     plan = plan_page(meta["width"], meta["height"], meta["resolutions"], rect)
     wanted = [(c, k) for k in range(plan.rows[0], plan.rows[1] + 1) for c in range(plan.cols[0], plan.cols[1] + 1)]
 
+    # Flipp numbers tile rows from the bottom, while the canvas below is built from the top, so flip the row number.
     def url(ck: tuple[int, int]) -> str:
         return f"{TILES}/{meta['path']}{plan.level}_{ck[0]}_{plan.nrows - 1 - ck[1]}.jpg"
 
@@ -422,6 +432,7 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
         fetched = list(pool.map(lambda ck: _tile(url(ck)), wanted))
     if not any(fetched):
         return None
+    # Paste the tiles onto one big white canvas, then crop to exactly the page's rectangle (tiles overshoot its edges).
     c0, k0 = plan.cols[0], plan.rows[0]
     canvas = Image.new("RGB", ((plan.cols[1] - c0 + 1) * TILE, (plan.rows[1] - k0 + 1) * TILE), "white")
     for (c, k), data in zip(wanted, fetched, strict=True):
@@ -431,13 +442,15 @@ def render_page(meta: dict, page_no: int) -> bytes | None:
     ox, oy = c0 * TILE, k0 * TILE - plan.pad
     page = canvas.crop((x0 - ox, y0 - oy, x1 - ox, y1 - oy))
     out = io.BytesIO()
+    # Quality 82 + progressive: small enough to load fast on a phone, sharp enough to read the fine print when zoomed.
     page.save(out, "JPEG", quality=82, optimize=True, progressive=True)
     return out.getvalue()
 
 
 def fetch_grocery_flyer(merchant: str, store_key: str, postal: str = DEFAULT_POSTAL) -> dict:
-    """One named store's weekly grocery flyer. `pages` is always []: Flipp publishes no whole-page images, so the
-    app lays the cutouts out at their boxes. `rows` is the real value."""
+    """One named store's weekly grocery flyer. `pages` is always []: this older entry point (used by the Databricks
+    pipeline) has no stored page images, so the app can lay the cutouts out at their boxes. The live API gets real
+    page pictures instead, by stitching them on demand with render_page. `rows` is the real value."""
     flyer = grocery_flyer_for(list_weekly_flyers(postal), merchant)
     if flyer is None:
         raise RuntimeError(f"no Groceries flyer found for merchant={merchant!r} near {postal}")
