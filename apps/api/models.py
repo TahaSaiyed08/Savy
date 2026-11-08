@@ -3,14 +3,18 @@
 Frozen interface: the web client is generated from the OpenAPI schema these produce (make gen-api).
 Change a field here and the generated client changes with it; CI fails until you regenerate and commit.
 """
+import json
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Mode = Literal["flyer_page", "receipt", "product", "manual"]
 Source = Literal["receipt", "photo", "manual", "voice"]
+Field4 = Literal["brand", "item", "variant", "size"]
+# [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
+BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
 
 
 class ExtractedItem(BaseModel):
@@ -58,7 +62,18 @@ class FlyerItem(BaseModel):  # Silver
     unit_price: float | None = None
     unit: str | None = None  # "100g", "100ml" or "ea"
     raw_text: str | None = None
-    bbox: list[float] | None = None
+    bbox: BBox | None = None
+    page_no: int | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
+    image_url: str | None = None  # Flipp: the tile's own cutout image. Volume pages: null (the page is the image)
+    image_path: str | None = None  # Volume pages: the page image. Flipp: null
+    page_aspect: float | None = None  # page width / height; null for Volume pages (use the image's own size)
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def _bbox_from_json(cls, v):  # the SQL Statement API returns ARRAY<DOUBLE> as a JSON string
+        return json.loads(v) if isinstance(v, str) else v
 
 
 class WeeklyPrice(BaseModel):  # Gold
@@ -84,6 +99,7 @@ class UserItem(BaseModel):
     source: Source
     added_at: datetime
     last_bought_at: datetime | None = None
+    in_basket: bool = False  # from basket_items
 
 
 class Receipt(BaseModel):
@@ -93,17 +109,6 @@ class Receipt(BaseModel):
     total: float | None = None
     bought_at: date | None = None
     image_path: str | None = None
-
-
-class MyDeal(BaseModel):  # Gold view
-    user_id: UUID
-    user_item_id: str
-    flyer_item_id: str
-    store: str
-    price: float | None = None
-    unit_price: float | None = None
-    match_score: float
-    savings_vs_median: float | None = None
 
 
 # --- API shapes -----------------------------------------------------------
@@ -127,11 +132,71 @@ class SaveItems(BaseModel):
     bought_at: datetime | None = None
 
 
-class Deal(MyDeal):
+class Deal(BaseModel):
+    """One flyer listing that is exactly the user's item (logic.same_item), with where to find it in the flyer."""
+
+    user_id: UUID
+    user_item_id: str
+    flyer_item_id: str
+    store: str
+    price: float | None = None
+    unit_price: float | None = None
+    savings_vs_median: float | None = None
     item_label: str  # what the user has on their list
     flyer_label: str  # what the flyer advertises
     unit: str | None = None
-    week_start: date | None = None  # None in non-mock mode until the Gold view carries it
+    week_start: date | None = None
+    cost: float  # this listing's price for the user's size (logic.cost); cheapest = lowest cost
+    page_id: str
+    page_no: int | None = None
+    bbox: BBox | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None  # the sticky card shows these to the cashier
+
+
+class ListItem(UserItem):
+    """A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."""
+
+    cheapest: Deal | None = None
+    missing: list[Field4] = []  # empty (or unreadable size); all four are needed to match
+
+
+class ItemPatch(BaseModel):
+    """Edit a list item or move it to/from the basket. Only the fields sent are changed; unknown fields are ignored."""
+
+    model_config = {"str_strip_whitespace": True}
+
+    brand: str | None = None
+    item: str = Field(None, min_length=1)  # may be omitted, never null or blank
+    variant: str | None = None
+    size_qty: float | None = Field(None, gt=0)
+    size_unit: str | None = None
+    in_basket: bool | None = None
+
+
+class SetBasket(BaseModel):
+    in_basket: bool
+
+
+class Tile(BaseModel):
+    item_id: str
+    bbox: BBox
+    image_url: str | None = None  # null: draw label and price instead (mock), or the page image already shows it
+    label: str
+    price: float | None = None
+
+
+class PageView(BaseModel):
+    """One flyer page for the price-match screen: highlight the tile whose item_id is the listing's flyer_item_id."""
+
+    page_id: str
+    store: str
+    page_no: int | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
+    image_url: str | None = None  # full page image, relative to the API (/flyer-pages/{id}/image); null for Flipp
+    aspect: float | None = None  # width / height when there is no page image to size from
+    tiles: list[Tile]
 
 
 class StoreTotal(BaseModel):

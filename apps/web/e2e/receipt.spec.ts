@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-// Receipt scan -> confirm (low-confidence rows flagged) -> save -> appears in My List. Mock mode's
+// Receipt scan -> confirm (low-confidence rows flagged) -> save -> appears in Pantry. Mock mode's
 // MockExtractor returns the same canned extraction regardless of the actual image bytes.
-test("receipt photo: scan, confirm, items land in My List", async ({ page }) => {
+test("receipt photo: scan, confirm, items land in Pantry", async ({ page }) => {
   await page.goto("/list");
 
   await page.getByRole("button", { name: "Add item" }).click();

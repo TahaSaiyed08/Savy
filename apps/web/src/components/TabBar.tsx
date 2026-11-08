@@ -1,11 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { List, ShoppingCart, Tag } from "@/components/icons";
+import { List, Plus, ShoppingCart } from "@/components/icons";
 
+// Routes stay /list, /deals, /basket (frozen interface) -- only the visible labels changed: Pantry is
+// every item ever added, Add item(s) is the (renamed, compacted) deal-browsing/add page.
 const TABS = [
-  { href: "/list", label: "My List", Icon: List },
-  { href: "/deals", label: "Deals", Icon: Tag },
+  { href: "/list", label: "Pantry", Icon: List },
+  { href: "/deals", label: "Add item(s)", Icon: Plus },
   { href: "/basket", label: "Basket", Icon: ShoppingCart },
 ];
 

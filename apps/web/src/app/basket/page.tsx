@@ -1,9 +1,32 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { EmptyState, InsetGroup, LargeTitle, RetryButton, Row, Status, money } from "@/components/ui";
+import { EmptyState, InsetGroup, LargeTitle, RetryButton, Row, Skeleton, Status, money } from "@/components/ui";
 import { CircleCheck, ShoppingCart } from "@/components/icons";
 import { api, withUser } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
+
+function BasketSkeleton() {
+  return (
+    <>
+      <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-9 w-28" />
+        <Skeleton className="h-[15px] w-44" />
+      </div>
+      <section className="mx-4 mb-6">
+        <Skeleton className="mb-1.5 ml-4 h-3 w-16" />
+        <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="flex min-h-tap items-center gap-3 border-b border-separator px-4 py-2.5 last:border-b-0">
+              <Skeleton className="h-[17px] w-28" />
+            </li>
+          ))}
+        </ul>
+      </section>
+    </>
+  );
+}
 
 export default function Basket() {
   const router = useRouter();
@@ -16,7 +39,15 @@ export default function Basket() {
   return (
     <>
       <LargeTitle title="Basket" />
-      <Status loading={loading} error={error} />
+      {loading && (
+        <>
+          <p role="status" className="sr-only">
+            Loading…
+          </p>
+          <BasketSkeleton />
+        </>
+      )}
+      <Status error={error} />
       {error && <RetryButton onRetry={refetch} />}
 
       {!loading && !error && b && !b.cheapest_store && (
@@ -25,10 +56,12 @@ export default function Basket() {
 
       {b?.cheapest_store && bestStore && (
         <>
-          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
+          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-tint/25 bg-gradient-to-br from-savings-bg to-elevated p-5 shadow-card">
             <div className="flex items-center justify-between">
               <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Best single store</p>
-              <CircleCheck size={20} className="text-tint" />
+              <span className="flex size-6 items-center justify-center rounded-full bg-tint text-white">
+                <CircleCheck size={16} />
+              </span>
             </div>
             <p className="text-[28px] font-bold">{b.cheapest_store}</p>
             <p className="text-[34px] font-bold text-tint">{money(bestStore.total)}</p>

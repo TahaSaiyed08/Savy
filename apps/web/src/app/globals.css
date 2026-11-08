@@ -138,3 +138,14 @@ body {
   min-height: 100dvh;
   -webkit-tap-highlight-color: transparent;
 }
+
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
