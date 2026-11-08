@@ -88,3 +88,59 @@ describe("Databricks App proxy", () => {
     expect(upstream).toEqual([]);
   });
 });
+
+describe("Databricks App proxy upload cap", () => {
+  const MB = 1024 * 1024;
+  const unlockedHeaders = { [PASSCODE_HEADER]: PASS };
+
+  async function post(body: BodyInit, headers: Record<string, string>) {
+    vi.resetModules();
+    vi.stubEnv("DATABRICKS_APP_URL", "https://realdeal-api.example.databricksapps.com");
+    vi.stubEnv("DEMO_PASSCODE", PASS);
+    const { POST } = await import("../app/api/[...path]/route");
+    const init = { method: "POST", body, headers: { ...unlockedHeaders, ...headers }, duplex: "half" };
+    const req = new NextRequest("http://localhost:3000/api/intake/receipt",
+                                init as ConstructorParameters<typeof NextRequest>[1]);
+    return POST(req, { params: Promise.resolve({ path: ["intake", "receipt"] }) });
+  }
+
+  function stream(totalBytes: number, chunk = MB): ReadableStream<Uint8Array> {
+    let sent = 0;
+    return new ReadableStream({
+      pull(c) {
+        if (sent >= totalBytes) return c.close();
+        const n = Math.min(chunk, totalBytes - sent);
+        sent += n;
+        c.enqueue(new Uint8Array(n));
+      },
+    });
+  }
+
+  it("refuses a declared oversized body before reading it", async () => {
+    const r = await post(stream(1), { "content-length": String(12 * MB) });
+    expect(r.status).toBe(413);
+    expect(upstream).toEqual([]);
+  });
+
+  it("stops reading an undeclared stream once it passes the cap", async () => {
+    let pulled = 0;
+    const big = stream(50 * MB);
+    const counted = big.pipeThrough(new TransformStream({ transform(c, ctl) { pulled += c.byteLength; ctl.enqueue(c); } }));
+    const r = await post(counted, {});
+    expect(r.status).toBe(413);
+    expect(upstream).toEqual([]);
+    expect(pulled).toBeLessThan(15 * MB); // gave up near 11 MB, never read all 50 MB
+  });
+
+  it("forwards a normal upload unchanged", async () => {
+    const photo = new Uint8Array(2 * MB).map((_, i) => i % 251);
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      upstream.push({ url, headers: new Headers(init.headers) });
+      expect(Buffer.from(init.body as ArrayBuffer).equals(Buffer.from(photo))).toBe(true);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const r = await post(photo, { "content-type": "application/octet-stream" });
+    expect(r.status).toBe(200);
+    expect(upstream).toHaveLength(1);
+  });
+});

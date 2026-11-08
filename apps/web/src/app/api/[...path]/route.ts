@@ -53,6 +53,37 @@ async function token(): Promise<string> {
   return pending;
 }
 
+// The API rejects uploads over 10 MB; allow 1 MB more for multipart framing. Checked while reading, so an
+// oversized body (declared or not) is refused without the laptop ever holding all of it in memory.
+const MAX_BODY_BYTES = 11 * 1024 * 1024;
+
+/** The request body, or null once it's known to exceed MAX_BODY_BYTES. */
+async function readCapped(req: NextRequest): Promise<ArrayBuffer | null> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
+  if (!req.body) return new ArrayBuffer(0);
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out.buffer;
+}
+
 async function proxy(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   if (!APP_URL) return Response.json({ detail: "DATABRICKS_APP_URL is not set" }, { status: 500 });
   const passcode = process.env.DEMO_PASSCODE;
@@ -67,6 +98,9 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
     return Response.json({ detail: "Locked: open /unlock on this device and enter the demo passcode" },
                          { status: 401 });
   }
+  // Read the body before anything else costs work, and never past the cap (see readCapped).
+  const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readCapped(req);
+  if (body === null) return Response.json({ detail: "upload over 10 MB" }, { status: 413 });
   const { path } = await params;
   let auth: string;
   try {
@@ -81,11 +115,10 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
   });
   headers.set("x-forwarded-for", ip); // the API's per-IP limit counts the real visitor, not the laptop
   headers.set("authorization", `Bearer ${auth}`);
-  const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const upstream = await fetch(`${APP_URL}/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`, {
     method: req.method,
     headers,
-    body: hasBody ? await req.arrayBuffer() : undefined, // uploads are capped at 10 MB by the API
+    body,
     redirect: "manual",
   });
   if (upstream.status === 401 || upstream.status === 403) cached = null; // re-ask the CLI next time
