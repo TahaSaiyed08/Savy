@@ -33,7 +33,7 @@ jobs:
       - run: npm --prefix apps/web run build
       - run: touch .env
       - run: npx --prefix apps/web playwright install --with-deps chromium
-      - run: npm --prefix apps/web exec playwright test
+      - run: npm --prefix apps/web run test:e2e
         env:
           CI: "1"
           REALDEAL_MOCK: "1"
