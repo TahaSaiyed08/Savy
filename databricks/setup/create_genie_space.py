@@ -16,6 +16,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+# Lets the script import the project's own modules (apps/, shared/) when run directly as a file.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -25,11 +26,13 @@ from apps.api import databricks_sync, flyers_live, genie  # noqa: E402
 
 
 def saved_postal_codes() -> list[str]:
+    # The postal codes this machine has downloaded flyers for: the data worth loading into the new tables.
     codes = (p.stem.removeprefix("flipp_") for p in sorted(flyers_live.DATA.glob("flipp_*.json")))
     return [c for c in codes if flyers_live.normalize(c) == c]
 
 
 def main() -> None:
+    # The script refuses to start without credentials rather than half-creating things in the wrong place.
     missing = [k for k in ("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID") if not os.getenv(k)]
     if missing:
         sys.exit(f"set {', '.join(missing)} (run with: uv run --env-file .env python {sys.argv[0]})")
@@ -50,6 +53,8 @@ def main() -> None:
         print("   none saved yet: start the API (make dev) and open the Flyers tab first")
 
     print("3. creating the Genie space...")
+    # Re-running is safe: look for a space with our title across all pages of results, and update it if found instead
+    # of creating a duplicate.
     serialized, warehouse = build(), os.environ["DATABRICKS_WAREHOUSE_ID"]
     existing, token = None, None
     while existing is None:
@@ -67,6 +72,7 @@ def main() -> None:
         space_id = w.genie.create_space(warehouse, serialized, title=TITLE, description=DESCRIPTION).space_id
         print(f"   created {space_id}")
 
+    # Saving the id is what switches the app's Ask button on (see genie.available).
     genie.SPACE_FILE.parent.mkdir(parents=True, exist_ok=True)
     genie.SPACE_FILE.write_text(json.dumps({"space_id": space_id}))
     print(f"4. saved {genie.SPACE_FILE}")
