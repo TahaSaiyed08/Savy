@@ -15,6 +15,9 @@ Mode = Literal["flyer_page", "receipt", "product", "manual"]
 Source = Literal["receipt", "photo", "manual", "voice", "flyer"]  # flyer: identity copied from a listing
 Field4 = Literal["brand", "item", "variant", "size"]
 # [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
+# Everything below is the API's contract: the web client's types are generated from these models, so a field added or
+# renamed here shows up in the app after `make gen-api`.
+#
 # Flipp hands some stores' links through an ad-click tracker, which lands on a generic page with Flipp's tags on it.
 _NOT_A_STORE = ("doubleclick.net", "googleadservices.com", "flipp.com", "wishabi.com", "wishabi.net")
 
@@ -29,7 +32,12 @@ def clean_store_url(raw: str | None) -> str | None:
     return f"https://{parts.netloc}{parts.path}"
 
 
+# A tile's rectangle on its flyer page, as fractions of the page (0 to 1) with the origin top-left, so it stays
+# correct at any zoom or image size. Four numbers: [left, top, right, bottom].
 BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
+
+
+# Intake: what a model (or the parser) reads out of a receipt, photo, voice note or typed line --------------------
 
 
 class ExtractedItem(BaseModel):
@@ -54,6 +62,10 @@ class Extraction(BaseModel):
 # --- realdeal.core tables -------------------------------------------------
 
 
+# The three flyer tables follow Databricks' bronze/silver/gold layering: raw pages in, parsed listings, weekly
+# prices out.
+
+
 class FlyerPage(BaseModel):  # Bronze
     page_id: str
     store: str
@@ -64,6 +76,8 @@ class FlyerPage(BaseModel):  # Bronze
 
 
 class FlyerItem(BaseModel):  # Silver
+    """One advertised product on one flyer page: the unit everything else (matching, browsing, Genie) works on."""
+
     item_id: str
     page_id: str
     store: str
@@ -89,6 +103,8 @@ class FlyerItem(BaseModel):  # Silver
     store_url: str | None = None  # the store's own page for the item, when Flipp knows it
     category: str | None = None  # Dairy & eggs, Produce, ...: from the AI refiner, null until it has run
 
+    # Validators run on every construction, including rows loaded back from disk or Databricks, so old or odd data
+    # is cleaned at the boundary instead of being re-checked wherever it is used.
     @field_validator("store_url")
     @classmethod
     def _store_page_only(cls, v):  # also cleans rows saved to disk by an older parser
@@ -113,6 +129,8 @@ class User(BaseModel):
 
 
 class UserItem(BaseModel):
+    # An entry on the person's Pantry list: what they buy, not what a flyer advertises. Matching compares these four
+    # fields (brand, item, variant, size) against flyer listings.
     user_item_id: str
     user_id: UUID
     brand: str | None = None
@@ -139,7 +157,7 @@ class Receipt(BaseModel):
 # --- API shapes -----------------------------------------------------------
 
 
-class IntakeResponse(BaseModel):
+class IntakeResponse(BaseModel):  # Intake never saves: it parses, the person confirms, then POST /items stores
     """Parsed but NOT saved. The client confirms, then POSTs /items."""
 
     extraction: Extraction
@@ -157,6 +175,10 @@ class SaveItems(BaseModel):
     bought_at: datetime | None = None
 
 
+# A Deal and a FlyerListing carry the same listing facts. A Deal is attached to one of the person's items (with how
+# much it saves); a FlyerListing stands alone, for browsing and for the "closest match" list.
+
+
 class Deal(BaseModel):
     """One flyer listing that is exactly the user's item (logic.same_item), with where to find it in the flyer."""
 
@@ -171,6 +193,8 @@ class Deal(BaseModel):
     flyer_label: str  # what the flyer advertises
     unit: str | None = None
     week_start: date | None = None
+    # What buying the user's amount would cost at this listing, so a 2 L jug and a 4 L jug compare fairly. The cheapest
+    # deal is the one with the lowest cost, not the lowest sticker price.
     cost: float  # this listing's price for the user's size (logic.cost); cheapest = lowest cost
     page_id: str
     page_no: int | None = None
@@ -203,12 +227,17 @@ class FlyerListing(BaseModel):
     store_url: str | None = None
 
 
+# What the Pantry and Basket screens show: a saved item plus the best flyer match found for it right now.
+
+
 class ListItem(UserItem):
     """A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."""
 
     cheapest: Deal | None = None
     saves_vs_next: float | None = None  # how much less cheapest is than the next store's price for this item
     closest: list[FlyerListing] = []  # similar listings, only when there is no exact one
+    # An item can only be matched exactly when brand, item, variant and size are all known. This lists the blanks so the
+    # app can tell the person what to fill in.
     missing: list[Field4] = []  # empty (or unreadable size); all four are needed to match
 
 
@@ -218,6 +247,8 @@ class ItemPatch(BaseModel):
     model_config = {"str_strip_whitespace": True}
 
     brand: str | None = None
+    # PATCH semantics: only fields the client sent are applied. `item` is the one required column, so it can be left
+    # out but never blanked.
     item: str = Field(None, min_length=1)  # may be omitted, never null or blank
     variant: str | None = None
     size_qty: float | None = Field(None, gt=0)
@@ -254,6 +285,9 @@ class PageView(BaseModel):
     next_page_id: str | None = None
 
 
+# The Flyers tab: one row per product (many stores' listings collapsed into the cheapest) with filter chips.
+
+
 class FlyerGroup(BaseModel):
     """One product across this week's flyers, for the Flyers tab: brand/item/variant/size like a UserItem, plus
     its cheapest listing (tapping the row opens that store's page at that listing's tile)."""
@@ -277,6 +311,9 @@ class FlyerBrowsePage(BaseModel):
     stores: list[str]  # every store with a current listing, for the filter chips
     categories: list[str] = []  # categories among the listings (busiest first), for the filter chips
     ready: bool = True  # false while the first download for this postal code is still running
+
+
+# Ask (Genie): a question in, the answer and the table behind it out. Optional by design; see ask_enabled below.
 
 
 class AskRequest(BaseModel):
@@ -307,6 +344,9 @@ class FlyersStatus(BaseModel):
     source: Literal["flipp", "databricks", "canned"]
     error: str | None = None  # why the last refresh failed, if it did
     ask_enabled: bool = False  # Genie is set up, so POST /ask works
+
+
+# Basket totals: the same shopping list priced at each single store versus split across the cheapest store per item.
 
 
 class StoreTotal(BaseModel):

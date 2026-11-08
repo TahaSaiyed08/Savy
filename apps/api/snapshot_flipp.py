@@ -14,6 +14,7 @@ from apps.api import flyers_live  # noqa: E402
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # `force=True` skips the "is it stale?" check and downloads everything, which is the point of running this by hand.
     postal = flyers_live.normalize(sys.argv[1] if len(sys.argv) > 1 else flyers_live.DEFAULT_POSTAL)
     if postal is None:
         sys.exit("postal code should look like V6T 1Z4")

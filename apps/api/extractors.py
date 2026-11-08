@@ -17,12 +17,16 @@ from shared.units import normalize_unit
 log = logging.getLogger(__name__)
 
 
+# An extractor turns a photo or a line of text into candidate items. Three interchangeable implementations sit behind
+# this one interface (Claude, Databricks ai_query, and a canned mock), and get_extractor() picks one at startup.
 class Extractor(Protocol):
     def extract(
         self, mode: Mode, *, image: bytes | None = None, media_type: str = "image/jpeg", text: str | None = None
     ) -> Extraction: ...
 
 
+# The first bytes of a file say what it really is. Phones and browsers often mislabel uploads (HEIC called JPEG), and
+# the model APIs reject a wrong type, so the real type is detected rather than trusted.
 _MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
 
 
@@ -46,6 +50,7 @@ class ClaudeExtractor:
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
+        # A message to Claude is a list of parts: the picture (if any) first, then the text instruction.
         content: list[dict] = []
         if image:
             media_type = sniff_media_type(image)
@@ -55,6 +60,7 @@ class ClaudeExtractor:
             data = base64.standard_b64encode(image).decode()
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
+        # `parse` makes the SDK validate the reply against Extraction, so a malformed answer fails here, not later.
         r = self.client.messages.parse(
             model=self.model,
             max_tokens=16000,
@@ -62,16 +68,20 @@ class ClaudeExtractor:
             messages=[{"role": "user", "content": content}],
             output_format=Extraction,
         )
+        # A refusal or empty parse becomes a RuntimeError, which the API reports to the app as a 422 "couldn't read".
         if r.stop_reason == "refusal" or r.parsed_output is None:
             raise RuntimeError(f"extraction failed: stop_reason={r.stop_reason}")
         return r.parsed_output
 
 
+# Failures of the backend itself (as opposed to a bad photo) get their own type so the API can answer 502 "try again"
+# instead of blaming the person's input with a 422.
 class ExtractionServiceError(Exception):
     """The extraction backend itself failed (warehouse, model endpoint, upload): a 502, not the photo's fault."""
 
 
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+# Asks Databricks to force the model's reply to match the Extraction JSON schema, the same contract Claude uses.
 _RESPONSE_FORMAT = json.dumps({"type": "json_schema", "json_schema": {
     "name": "extraction", "strict": True, "schema": Extraction.model_json_schema()}})
 
@@ -91,6 +101,7 @@ class DatabricksAIExtractor:
         if missing:
             raise RuntimeError(f"EXTRACTOR=databricks needs {', '.join(missing)}")
         self.model = os.getenv("DATABRICKS_EXTRACT_MODEL", "databricks-llama-4-maverick")
+        # The endpoint name is pasted into the SQL text (SQL can't parameterise it), so only plain names are allowed.
         if not re.fullmatch(r"[\w.-]+", self.model):  # it's inlined in the SQL: endpoint names can't be parameters
             raise ValueError(f"DATABRICKS_EXTRACT_MODEL={self.model!r} isn't a serving endpoint name")
 
@@ -104,6 +115,8 @@ class DatabricksAIExtractor:
         if media_type is None:
             raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
                                      "(iPhone: Settings > Camera > Formats > Most Compatible)")
+        # Images take a detour: upload to a Volume, read them back inside the query, and always delete afterwards (the
+        # `finally` below), so receipts don't pile up in the workspace.
         path = f"{self.UPLOADS}/{uuid.uuid4()}.{_EXT[media_type]}"
         try:
             try:
@@ -128,6 +141,7 @@ class DatabricksAIExtractor:
 
     @staticmethod
     def _parse(rows: list[dict]) -> Extraction:
+        # The query returns one row with the model's JSON in column `r`; validate it against the schema.
         raw = rows[0].get("r") if rows else None
         try:
             return Extraction.model_validate_json(raw or "")
@@ -135,6 +149,8 @@ class DatabricksAIExtractor:
             raise RuntimeError(f"ai_query returned no usable extraction: {str(raw)[:200]}") from e
 
 
+# What the app uses with no API keys, so a fresh clone runs end to end. The numbers are chosen to exercise the UI: one
+# low-confidence item per mode shows the "please confirm" sheet.
 class MockExtractor:
     """Canned output so the app runs from a fresh clone with no keys."""
 
@@ -166,6 +182,7 @@ _EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": D
 
 
 def get_extractor() -> Extractor:
+    # Explicit EXTRACTOR wins; otherwise an Anthropic key means Claude, and no key means the mock.
     choice = os.getenv("EXTRACTOR") or ("claude" if os.getenv("ANTHROPIC_API_KEY") else "mock")
     if choice not in _EXTRACTORS:
         raise ValueError(f"EXTRACTOR={choice!r} is not one of: {', '.join(_EXTRACTORS)}")

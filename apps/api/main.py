@@ -38,9 +38,13 @@ from apps.api.models import (
 log = logging.getLogger(__name__)
 
 
+# The API starts in one of two worlds. MOCK (the default, no Databricks needed) serves flyers from memory, filled
+# from live Flipp feeds or canned data; otherwise it reads everything from Databricks tables. `store.MOCK` is the
+# switch every endpoint below checks.
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    # Only the in-memory world keeps its own flyers fresh: a background loop re-downloads when a feed gets stale.
     keeper = asyncio.create_task(flyers_live.keep_fresh()) if store.MOCK else None
     yield
     if keeper:
@@ -49,6 +53,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
 MAX_UPLOAD = 10 * 1024 * 1024
+# Any item the model is less than 60% sure of makes the whole result "needs_confirm", so the app shows a review sheet
+# instead of saving silently.
 CONFIRM_BELOW = 0.6
 
 # Intake calls paid APIs (Anthropic, ElevenLabs) and the app has no login, so cap them per client and globally.
@@ -57,6 +63,8 @@ CONFIRM_BELOW = 0.6
 INTAKE_LIMIT = int(os.getenv("INTAKE_LIMIT_PER_HOUR", "30"))
 INTAKE_GLOBAL_LIMIT = int(os.getenv("INTAKE_GLOBAL_LIMIT_PER_HOUR", "300"))  # backstop on total spend
 _WINDOW = 3600.0
+# A sliding window: each client (and everyone together) keeps the timestamps of recent accepted calls, and a call is
+# refused once the last hour holds too many of them.
 _hits: dict[str, deque[float]] = {}
 _global: deque[float] = deque()
 
@@ -82,10 +90,12 @@ async def rate_limit(request: Request) -> None:
     q = _hits.get(key, deque())
     _prune(q, now)
     _prune(_global, now)
+    # Whichever limit is hit first decides the Retry-After: this client's own, or the app-wide spend cap.
     full = q if len(q) >= INTAKE_LIMIT else _global if len(_global) >= INTAKE_GLOBAL_LIMIT else None
     if full is not None:
         retry = str(int(_WINDOW - (now - full[0])) + 1)
         raise HTTPException(429, "Too many uploads; try again later", {"Retry-After": retry})
+    # Recorded only after both checks pass, so refused calls don't extend the person's own wait.
     q.append(now)
     _global.append(now)
     _hits[key] = q  # only accepted calls create entries, so memory is bounded by the global cap
@@ -110,6 +120,8 @@ async def ask_limit(request: Request) -> None:
     q.append(now)
 
 
+# There are no accounts. The phone makes a random UUID once and sends it as X-User-Id, and that id scopes every item.
+# The postal code travels the same way, as a header, so it never appears in a URL or a log line.
 UserId = Annotated[UUID, Header(alias="X-User-Id", description="UUID generated on the device")]
 
 
@@ -123,11 +135,13 @@ def postal_code(
 
 
 Postal = Annotated[str, Depends(postal_code)]
+# The fields that say *what* an item is. Editing any of them can make a flyer-added item stop being a real listing.
 _IDENTITY = {"brand", "item", "variant", "size_qty", "size_unit"}
 Ext = Annotated[Extractor, Depends(get_extractor)]
 
 
 def _read(upload: UploadFile, kind: str) -> bytes:
+    # Reads one byte past the limit so an oversize file is detected without loading all of it into memory.
     if not (upload.content_type or "").startswith(kind):
         raise HTTPException(415, f"expected {kind}* upload")
     data = upload.file.read(MAX_UPLOAD + 1)
@@ -162,6 +176,8 @@ def health() -> dict:
     return {"ok": True, "mock": store.MOCK, "extractor": type(get_extractor()).__name__}
 
 
+# Intake endpoints: each turns a photo, voice note or typed line into candidate items, and none of them saves anything.
+# The app shows the result for confirmation, then calls POST /items.
 @app.post("/intake/receipt", dependencies=[Depends(rate_limit)])
 def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext, background: BackgroundTasks) -> IntakeResponse:
     image = _read(file, "image/")
@@ -182,6 +198,7 @@ def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeRespon
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
+    # Voice is two paid calls in a row: speech-to-text, then the same text extractor as typing.
     audio = _read(file, "audio/")
     try:
         text = stt.transcribe(audio, file.filename or "audio.webm", file.content_type)
@@ -194,6 +211,7 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
+# Flyers are optional data for the list screens: if they can't be loaded, the person's own items must still work.
 def _flyers_or_none(postal: str) -> list[FlyerItem]:
     try:
         return store.flyer_items(postal)
@@ -213,6 +231,9 @@ def _listed(items: list[UserItem], postal: str) -> list[ListItem]:
             for i in items]
 
 
+# --- the person's list -----------------------------------------------------------------------------------------
+# Every response is a ListItem: the saved item plus its cheapest current flyer listing, recomputed on each read so a
+# new week's flyers are reflected without touching what the person saved.
 @app.get("/items")
 def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
     """My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}."""
@@ -222,6 +243,8 @@ def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
 @app.post("/items")
 def save_items(user_id: UserId, body: SaveItems, postal: Postal) -> list[ListItem]:
     """Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing)."""
+    # A client can say "this came from a flyer", which skips the all-four-fields rule. Only believe it when a current
+    # listing really is that product; otherwise it is stored as a plain manual item.
     if body.source == "flyer":  # the client's claim, and it would exempt these items from needing all four fields
         flyers = _flyers_or_none(postal)
         if not all(logic.is_listing(i, flyers) for i in body.items):
@@ -236,6 +259,7 @@ def update_item(user_id: UserId, user_item_id: str, body: ItemPatch, postal: Pos
     item = store.update_item(user_id, user_item_id, body, postal)
     if item is None:
         raise HTTPException(404, "no such item")
+    # model_fields_set is what the client actually sent, so a PATCH that only toggles the basket never demotes an item.
     edited = body.model_fields_set & _IDENTITY
     if item.source == "flyer" and edited and not logic.is_listing(item, _flyers_or_none(postal)):
         item = store.set_source(user_id, user_item_id, "manual", postal) or item  # no flyer lists this any more
@@ -253,6 +277,7 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
     store.delete_item(user_id, user_item_id)
 
 
+# --- comparisons -------------------------------------------------------------------------------------------------
 @app.get("/deals")
 def get_deals(user_id: UserId, postal: Postal) -> list[Deal]:
     """Every store's cheapest exact listing for every item on My List."""
@@ -266,6 +291,8 @@ def get_basket(user_id: UserId, postal: Postal) -> Basket:
     return logic.basket(items, logic.deals_for(items, store.flyer_items(postal)))
 
 
+# --- flyers --------------------------------------------------------------------------------------------------------
+# `live` is true when this process is serving real Flipp feeds (rather than canned data or Databricks tables).
 @app.get("/flyers/status")
 def flyers_status(postal: Postal) -> FlyersStatus:
     """Whether this week's flyers near a postal code are loaded. The first request for a new postal code starts the
@@ -283,6 +310,7 @@ def flyers_status(postal: Postal) -> FlyersStatus:
 
 @app.post("/ask", dependencies=[Depends(ask_limit)])
 def ask_genie(body: AskRequest, postal: Postal) -> AskResponse:
+    # 503 (not 404) when Genie isn't configured, so the app can tell "not set up" from "wrong URL".
     """Ask Genie about this week's deals in plain words. 503 until the Genie space exists."""
     if not genie.available():
         raise HTTPException(503, "Genie isn't set up yet")
@@ -298,6 +326,7 @@ def browse_flyer_items(postal: Postal, q: str | None = None,
                        sort: Literal["savings", "price", "ends", "az", "relevance"] = "savings", page: int = 1,
                        page_size: int = 30, category: str | None = None) -> FlyerBrowsePage:
     """The Flyers tab: every current listing near the postal code, one row per product at its cheapest store."""
+    # Pagination is clamped here, not trusted: page 1 or later, and at most 100 rows however large a client asks.
     page, page_size = max(1, page), max(1, min(page_size, 100))
     flyers = store.flyer_items(postal)
     groups = logic.browse_flyers(flyers, q, store_name, sort, category)
@@ -314,6 +343,7 @@ def get_page(page_id: str) -> PageView:
     tiles = store.page_tiles(page_id)
     if not tiles:
         raise HTTPException(404, "page not in a current flyer")
+    # Page navigation comes from the store's other pages in the same flyer; with no neighbours the links are null.
     f = tiles[0]
     live = flyers_live.page_aspect(page_id) if store.MOCK and flyers_live.ENABLED else None  # Flipp's real page image
     pages = store.flyer_pages(f)
@@ -332,6 +362,8 @@ def get_page(page_id: str) -> PageView:
          responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}})
 def get_page_image(page_id: str, background: BackgroundTasks) -> Response:
     """The real printed page: from the flyers Volume (Databricks) or stitched from Flipp's image tiles (live)."""
+    # Two sources for the picture: a stored image (Databricks) or one stitched from Flipp's small image tiles on
+    # demand. Stitched pages are cached for a day; the neighbouring pages are warmed after the response.
     path = next((t.image_path for t in store.page_tiles(page_id) if t.image_path), None)
     if not path:
         jpeg = flyers_live.page_jpeg(page_id) if store.MOCK and flyers_live.ENABLED else None

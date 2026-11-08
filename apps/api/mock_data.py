@@ -10,11 +10,15 @@ from apps.api.models import FlyerItem
 from shared.stores import STORES as _NAMES
 from shared.units import normalize_unit, unit_price
 
+# The canned flyers are laid out on a fake printed page: a 2-column, 4-row grid of tiles, ASPECT wide to tall, so the
+# Price Match screen can highlight a tile even with no real picture behind it.
 WEEK = date(2026, 11, 5)
 STORES = list(_NAMES.values())
 ASPECT = 0.62  # a portrait flyer page
 _COLS, _ROWS_PER_PAGE = 2, 4
 
+# Deliberately chosen cases for the matcher and the tests: the same item at several stores and sizes, "2 x 1.89 L" vs
+# "4 L", words in a different order ("boneless skinless"), a sizeless banana sold per lb, and a "1%" milk next to "2%".
 _ROWS = [  # store, brand, item, variant, size text, price
     ("Save-On-Foods", "Dairyland", "milk", "2%", "4 L", 6.49),
     ("Save-On-Foods", "Dairyland", "milk", "2%", "2 L", 4.29),
@@ -40,9 +44,11 @@ _ROWS = [  # store, brand, item, variant, size text, price
 
 
 def _items() -> list[FlyerItem]:
+    # Each store fills its own pages in order: `slots` counts how many tiles that store has placed so far.
     out, slots = [], {s: 0 for s in STORES}
     for i, (store, brand, item, variant, size_text, price) in enumerate(_ROWS):
         n, slots[store] = slots[store], slots[store] + 1
+        # From the running count, work out which page and which grid cell this tile is in, then its box on the page.
         page_no, cell = n // (_COLS * _ROWS_PER_PAGE) + 1, n % (_COLS * _ROWS_PER_PAGE)
         x, y = cell % _COLS / _COLS, cell // _COLS / _ROWS_PER_PAGE
         size, raw = normalize_unit(size_text), " ".join(p for p in (brand, item, variant, size_text) if p)
@@ -71,6 +77,7 @@ SEED_ITEMS = [
 ]
 
 
+# Pantry staples worth starting a new user with, so the first screen shows real savings instead of an empty list.
 _STAPLES = re.compile(r"\b(milk|eggs?|chicken|yogurt|bread|coffee|rice|cheese|butter)\b", re.I)
 
 
@@ -80,6 +87,8 @@ def _staple_seeds(flyers: list[FlyerItem]) -> list[dict]:
     stores: dict[tuple, set[str]] = {}
     for f in flyers:
         stores.setdefault((f.brand, f.item, f.variant, f.size_qty, f.size_unit), set()).add(f.store)
+    # Rank by how many stores carry the product (more stores = a more meaningful "cheaper than the next store"),
+    # and take one product per staple word, so there is one milk, one eggs, and so on.
     seeds, seen = [], set()
     ranked = sorted((k for k in stores if k[0] and k[3] and _STAPLES.search(k[1])),
                     key=lambda k: (-len(stores[k]), k[1]))
@@ -92,6 +101,7 @@ def _staple_seeds(flyers: list[FlyerItem]) -> list[dict]:
                           in_basket=len(seeds) < 3))
         if len(seeds) == 5:
             break
+    # The incomplete "ramen" item shows what an unfinished entry looks like, and exercises the closest-match list.
     return seeds + [dict(item="ramen", in_basket=True)]  # typed: shows the closest-match path
 
 

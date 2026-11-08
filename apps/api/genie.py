@@ -14,12 +14,14 @@ from apps.api.models import AskResponse
 
 log = logging.getLogger(__name__)
 
+# The space id is looked up in this order: the GENIE_SPACE_ID setting, then the file `make databricks-setup` writes.
 SPACE_FILE = Path(__file__).parent / "data" / "genie_space.json"
 TIMEOUT = timedelta(seconds=150)  # a cold serverless warehouse takes a while to start
-MAX_ROWS = 15
+MAX_ROWS = 15  # the app shows a short table; a longer one would be unreadable on a phone and slow to send
 _NEEDS = ("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID")
 
 
+# Every failure is turned into this, with a message written for the person: raw Databricks errors stay in the log.
 class GenieError(RuntimeError):
     """Genie could not answer; the message is safe to show."""
 
@@ -34,12 +36,14 @@ def space_id() -> str | None:
 
 
 def available() -> bool:
+    # Drives the Ask button: it only appears when a space exists AND the credentials to reach it are set.
     return bool(space_id()) and all(os.getenv(k) for k in _NEEDS)
 
 
 def ask(question: str, postal: str, conversation_id: str | None = None) -> AskResponse:
     from apps.api import databricks_sql as db
 
+    # Follow-up questions pass the previous answer's conversation id, so Genie remembers what "those" refers to.
     w, sid = db._client(), space_id()
     if not sid:
         raise GenieError("Genie isn't set up yet")
@@ -58,6 +62,8 @@ def ask(question: str, postal: str, conversation_id: str | None = None) -> AskRe
     if msg.error:
         raise GenieError("Genie couldn't answer that. Try asking it another way.")
 
+    # A Genie reply is a list of attachments: a text answer, and/or a query. For a query we also fetch the result table
+    # so the app can show the rows behind the sentence.
     out = AskResponse(conversation_id=msg.conversation_id)
     for a in msg.attachments or []:
         if a.text and a.text.content:

@@ -23,16 +23,22 @@ from apps.api.models import FlyerItem
 
 log = logging.getLogger(__name__)
 
+# The fixed menu of categories the model must pick from. The Flyers tab's chips and the Genie instructions use the
+# same list, so adding one here means updating those too.
 CATEGORIES = ["Dairy & eggs", "Produce", "Meat & seafood", "Bakery", "Pantry", "Snacks & sweets", "Frozen",
               "Drinks", "Household", "Health & beauty", "Other"]
 CACHE_FILE = Path(__file__).parent / "data" / "refined.json"
 MODEL = os.getenv("REFINE_MODEL", "databricks-llama-4-maverick")
+# Cost and rate-limit controls: 25 names per call keeps replies short enough to parse reliably, 3 calls in flight is
+# gentle on the shared endpoint, and a failed call is retried a few times with a growing pause.
 BATCH = 25  # names per model call
 PARALLEL = 3  # calls in flight at once
 RETRIES = 3
-MAX_CACHED = 50_000
+MAX_CACHED = 50_000  # the answer cache is trimmed oldest-first beyond this, so it can't grow without bound
 _NEEDS = ("DATABRICKS_HOST", "DATABRICKS_TOKEN")
 
+# The instruction sent to the model. It asks for strict JSON in a fixed shape (one object per listing, same order) so
+# parse() can check the reply. Sizes are deliberately left out: the regex parser reads those more reliably.
 _PROMPT = """Parse each grocery flyer listing into brand, item, variant and category.
 
 - brand: the maker or store brand, like "Kraft", "PC", "no name", "Western Family", or null. Each listing may come with
@@ -59,6 +65,8 @@ def enabled() -> bool:
 
 
 def _key(brand: str | None, name: str) -> str:
+    # The cache key is the flyer's own text (name + brand hint, lowercased): the same wording always gets the same
+    # answer, so a product's identity doesn't wobble between refreshes.
     return hashlib.sha1(f"{brand or ''}|{name}".lower().encode()).hexdigest()[:16]
 
 
@@ -74,6 +82,7 @@ def _load() -> dict[str, dict]:
 
 
 def _remember(new: dict[str, dict]) -> None:
+    # Written after every batch, via a temp file and rename, so an interrupted run keeps what it already learned.
     cache = _load()
     with _lock:
         cache.update(new)
@@ -93,6 +102,7 @@ def _text(v) -> str | None:
 def parse(reply: str, expected: int) -> list[dict | None]:
     """The model's reply as one cleaned dict per listing. None for an entry that can't be trusted (or all of them
     when the reply isn't the right shape): those listings keep the parser's answer."""
+    # Models often wrap JSON in prose or code fences; take everything from the first "[" to the last "]".
     try:
         data = json.loads(reply[reply.index("["): reply.rindex("]") + 1])
     except ValueError:
@@ -127,12 +137,15 @@ def _call(batch: list[dict]) -> list[dict | None]:
             if attempt == RETRIES - 1:
                 log.warning("model call failed for %d flyer names", len(batch), exc_info=True)
                 return [None] * len(batch)
+            # Pauses of 2 s, then 4 s. Only the final failure is logged, so a brief rate limit doesn't spam the log.
             time.sleep(2 ** (attempt + 1))  # rate limited or briefly down: back off and try again
     return [None] * len(batch)
 
 
 def _believable(item: str, name: str, brand: str | None) -> bool:
     """The model must be describing this listing: its item shares a word with what the flyer printed."""
+    # A guard against a confused model: a plausible answer must share a word with what the flyer actually printed, so
+    # a reply meant for a different listing (or invented) is rejected rather than applied.
     words = logic._words(f"{name} {brand or ''}")
     return any(any(w.startswith(t) or t.startswith(w) for w in words) for t in logic._words(item))
 
@@ -148,6 +161,8 @@ def merge(row: FlyerItem, parsed: dict) -> FlyerItem:
 
 def apply(rows: list[FlyerItem]) -> list[FlyerItem]:
     """The rows with the model's names for every listing it hasn't been asked about yet (and has an answer for)."""
+    # 1) collect distinct names not yet labelled, 2) ask the model for the ones not in the cache, in parallel batches,
+    # 3) merge every cached answer back into the rows.
     cache = _load()
     pending = {}
     for r in rows:
