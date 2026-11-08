@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { ForceTheme } from "@/components/ForceTheme";
 import { RegisterSW } from "@/components/RegisterSW";
 import { TabBar } from "@/components/TabBar";
 import "./globals.css";
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <main className="mx-auto max-w-xl pb-[calc(env(safe-area-inset-bottom)+4rem)]">{children}</main>
         <TabBar />
         <RegisterSW />
+        <ForceTheme />
       </body>
     </html>
   );

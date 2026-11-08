@@ -30,6 +30,16 @@ def test_mock_flow_end_to_end():
     assert b["cheapest_store"] and b["split_total"] > 0 and "ramen" in b["unmatched"]
 
 
+def test_delete_item_removes_it():
+    before = c.get("/items", headers=H).json()
+    target = before[0]["user_item_id"]
+    assert c.delete(f"/items/{target}", headers=H).status_code == 204
+    after = c.get("/items", headers=H).json()
+    assert len(after) == len(before) - 1
+    assert target not in {i["user_item_id"] for i in after}
+    c.delete("/items/does-not-exist", headers=H)  # idempotent, no error
+
+
 def test_rejects_non_image_receipt():
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.txt", io.BytesIO(b"x"), "text/plain")})
     assert r.status_code == 415

@@ -130,6 +130,7 @@ class Deal(MyDeal):
     item_label: str  # what the user has on their list
     flyer_label: str  # what the flyer advertises
     unit: str | None = None
+    week_start: date | None = None  # None in non-mock mode until the Gold view carries it
 
 
 class StoreTotal(BaseModel):

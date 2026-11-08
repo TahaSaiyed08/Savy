@@ -42,7 +42,7 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
                 user_id=u.user_id, user_item_id=u.user_item_id, flyer_item_id=f.item_id, store=f.store,
                 price=f.price, unit_price=f.unit_price, unit=f.unit, match_score=round(s, 3),
                 savings_vs_median=None if mid is None or f.unit_price is None else round(mid - f.unit_price, 4),
-                item_label=label(u), flyer_label=f.raw_text or label(f),
+                item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
             ))
     return out
 

@@ -110,6 +110,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{user_item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Item */
+        delete: operations["delete_item_items__user_item_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deals": {
         parameters: {
             query?: never;
@@ -205,6 +222,8 @@ export interface components {
             flyer_label: string;
             /** Unit */
             unit?: string | null;
+            /** Week Start */
+            week_start?: string | null;
         };
         /**
          * ExtractedItem
@@ -566,6 +585,38 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UserItem"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_item_items__user_item_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description UUID generated on the device */
+                "X-User-Id": string;
+            };
+            path: {
+                user_item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
