@@ -5,13 +5,16 @@ Change a field here and the generated client changes with it; CI fails until you
 """
 import json
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 Mode = Literal["flyer_page", "receipt", "product", "manual"]
 Source = Literal["receipt", "photo", "manual", "voice"]
+Field4 = Literal["brand", "item", "variant", "size"]
+# [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
+BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
 
 
 class ExtractedItem(BaseModel):
@@ -59,7 +62,7 @@ class FlyerItem(BaseModel):  # Silver
     unit_price: float | None = None
     unit: str | None = None  # "100g", "100ml" or "ea"
     raw_text: str | None = None
-    bbox: list[float] | None = None  # [x0, y0, x1, y1] as fractions of the page, origin top-left
+    bbox: BBox | None = None
     page_no: int | None = None
     valid_from: date | None = None
     valid_to: date | None = None
@@ -138,7 +141,6 @@ class Deal(BaseModel):
     store: str
     price: float | None = None
     unit_price: float | None = None
-    match_score: float = 1.0  # always 1: matching is exact
     savings_vs_median: float | None = None
     item_label: str  # what the user has on their list
     flyer_label: str  # what the flyer advertises
@@ -147,7 +149,7 @@ class Deal(BaseModel):
     cost: float  # this listing's price for the user's size (logic.cost); cheapest = lowest cost
     page_id: str
     page_no: int | None = None
-    bbox: list[float] | None = None
+    bbox: BBox | None = None
     valid_from: date | None = None
     valid_to: date | None = None  # the sticky card shows these to the cashier
 
@@ -156,14 +158,16 @@ class ListItem(UserItem):
     """A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."""
 
     cheapest: Deal | None = None
-    missing: list[str] = []  # which of brand, item, variant, size are empty; all four are needed to match
+    missing: list[Field4] = []  # empty (or unreadable size); all four are needed to match
 
 
 class ItemPatch(BaseModel):
-    """Edit a list item or move it to/from the basket. Only the fields sent are changed."""
+    """Edit a list item or move it to/from the basket. Only the fields sent are changed; unknown fields are ignored."""
+
+    model_config = {"str_strip_whitespace": True}
 
     brand: str | None = None
-    item: str | None = Field(None, min_length=1)
+    item: str = Field(None, min_length=1)  # may be omitted, never null or blank
     variant: str | None = None
     size_qty: float | None = Field(None, gt=0)
     size_unit: str | None = None
@@ -176,7 +180,7 @@ class SetBasket(BaseModel):
 
 class Tile(BaseModel):
     item_id: str
-    bbox: list[float]
+    bbox: BBox
     image_url: str | None = None  # null: draw label and price instead (mock), or the page image already shows it
     label: str
     price: float | None = None

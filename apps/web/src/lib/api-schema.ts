@@ -129,8 +129,8 @@ export interface paths {
         head?: never;
         /**
          * Update Item
-         * @description Edit an item (send brand/item/variant/size; extra ExtractedItem fields are ignored), or move it to/from the
-         *     Basket with in_basket. Only the fields sent are changed.
+         * @description Edit an item (brand/item/variant/size_qty/size_unit; unknown fields such as price are ignored), or move it to
+         *     or from the Basket with in_basket. Only the fields sent are changed.
          */
         patch: operations["update_item_items__user_item_id__patch"];
         trace?: never;
@@ -146,7 +146,7 @@ export interface paths {
         put?: never;
         /**
          * Set Item Basket
-         * @description Moves a Pantry item into (or out of) the Basket. Same as PATCH with only in_basket.
+         * @description Moves a My List item into (or out of) the Basket. Same as PATCH with only in_basket.
          */
         post: operations["set_item_basket_items__user_item_id__basket_post"];
         delete?: never;
@@ -289,11 +289,6 @@ export interface components {
             price?: number | null;
             /** Unit Price */
             unit_price?: number | null;
-            /**
-             * Match Score
-             * @default 1
-             */
-            match_score: number;
             /** Savings Vs Median */
             savings_vs_median?: number | null;
             /** Item Label */
@@ -366,13 +361,13 @@ export interface components {
         };
         /**
          * ItemPatch
-         * @description Edit a list item or move it to/from the basket. Only the fields sent are changed.
+         * @description Edit a list item or move it to/from the basket. Only the fields sent are changed; unknown fields are ignored.
          */
         ItemPatch: {
             /** Brand */
             brand?: string | null;
             /** Item */
-            item?: string | null;
+            item?: string;
             /** Variant */
             variant?: string | null;
             /** Size Qty */
@@ -426,7 +421,7 @@ export interface components {
              * Missing
              * @default []
              */
-            missing: string[];
+            missing: ("brand" | "item" | "variant" | "size")[];
         };
         /** ManualIntake */
         ManualIntake: {

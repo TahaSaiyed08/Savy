@@ -338,7 +338,7 @@
     "/items/{user_item_id}": {
       "patch": {
         "summary": "Update Item",
-        "description": "Edit an item (send brand/item/variant/size; extra ExtractedItem fields are ignored), or move it to/from the\nBasket with in_basket. Only the fields sent are changed.",
+        "description": "Edit an item (brand/item/variant/size_qty/size_unit; unknown fields such as price are ignored), or move it to\nor from the Basket with in_basket. Only the fields sent are changed.",
         "operationId": "update_item_items__user_item_id__patch",
         "parameters": [
           {
@@ -442,7 +442,7 @@
     "/items/{user_item_id}/basket": {
       "post": {
         "summary": "Set Item Basket",
-        "description": "Moves a Pantry item into (or out of) the Basket. Same as PATCH with only in_basket.",
+        "description": "Moves a My List item into (or out of) the Basket. Same as PATCH with only in_basket.",
         "operationId": "set_item_basket_items__user_item_id__basket_post",
         "parameters": [
           {
@@ -808,11 +808,6 @@
             ],
             "title": "Unit Price"
           },
-          "match_score": {
-            "type": "number",
-            "title": "Match Score",
-            "default": 1.0
-          },
           "savings_vs_median": {
             "anyOf": [
               {
@@ -878,9 +873,13 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "number"
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
                 },
-                "type": "array"
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
               },
               {
                 "type": "null"
@@ -1108,15 +1107,8 @@
             "title": "Brand"
           },
           "item": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "minLength": 1,
             "title": "Item"
           },
           "variant": {
@@ -1167,7 +1159,7 @@
         },
         "type": "object",
         "title": "ItemPatch",
-        "description": "Edit a list item or move it to/from the basket. Only the fields sent are changed."
+        "description": "Edit a list item or move it to/from the basket. Only the fields sent are changed; unknown fields are ignored."
       },
       "ListItem": {
         "properties": {
@@ -1272,7 +1264,13 @@
           },
           "missing": {
             "items": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "brand",
+                "item",
+                "variant",
+                "size"
+              ]
             },
             "type": "array",
             "title": "Missing",
@@ -1507,9 +1505,13 @@
           },
           "bbox": {
             "items": {
-              "type": "number"
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.0
             },
             "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
             "title": "Bbox"
           },
           "image_url": {

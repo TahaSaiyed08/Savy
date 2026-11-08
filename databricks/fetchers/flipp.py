@@ -7,7 +7,8 @@ Usage: uv run --env-file .env python databricks/fetchers/flipp.py [store ...] [-
        (no stores = all five; --dry-run writes the .jsonl files to DIR instead of the Volume)
 
 Auto Loader skips a file it has already read, so re-fetching the same week (same path) needs
-`databricks bundle run realdeal_flyers --full-refresh flipp_items,flipp_extractions,flyer_items`.
+`databricks bundle run realdeal_flyers --full-refresh flipp_items,flipp_extractions,flyer_items`. That re-runs
+ai_query on every Flipp item (about 1,500 calls for all five stores), which counts against the daily quota.
 """
 import argparse
 import json
@@ -68,11 +69,15 @@ def rows(slug: str, flyer: dict, limit: int | None = None) -> list[dict]:
     with ThreadPoolExecutor(max_workers=8) as pool:
         details = list(pool.map(lambda i: _get(f"items/{i['id']}").get("item", {}), items))
     week = flyer["valid_from"][:10]
-    out = []
+    out, no_detail, off_page = [], 0, 0
     for i, d in zip(items, details, strict=True):
-        cx = (i["left"] + i["right"]) / 2
+        if not d:  # without it there's no size text or "2/" marker, so the price could be for 2 units
+            no_detail += 1
+            continue
+        cx = (i["left"] + i["right"]) / 2  # Flipp's y axis points up: page top is 0, bottom is -height
         page = next((p for p in pages if p["left"] <= cx < p["right"]), None)
         if page is None:
+            off_page += 1
             continue
         w, h = page["right"] - page["left"], page["top"] - page["bottom"]
         bbox = [(i["left"] - page["left"]) / w, (page["top"] - i["top"]) / h,
@@ -93,6 +98,8 @@ def rows(slug: str, flyer: dict, limit: int | None = None) -> list[dict]:
             "image_url": (i.get("cutout_image_url") or "").replace("http://", "https://", 1) or None,
             "price": price, "raw_text": " ".join(str(t) for t in text if t)[:300],
         })
+    if no_detail or off_page:
+        print(f"{slug}: skipped {no_detail} items with no detail and {off_page} not on any page", file=sys.stderr)
     return out
 
 
@@ -104,12 +111,18 @@ def main() -> None:
     a = ap.parse_args()
     if bad := set(a.stores) - set(MERCHANTS):
         ap.error(f"unknown store {', '.join(bad)}; choose from {', '.join(MERCHANTS)}")
-    flyers = grocery_flyers()
+    flyers, failed = grocery_flyers(), []
     for slug in a.stores or MERCHANTS:
         if slug not in flyers:
             print(f"{slug}: no grocery flyer on Flipp for {POSTAL}", file=sys.stderr)
+            failed.append(slug)
             continue
-        r = rows(slug, flyers[slug], a.limit)
+        try:
+            r = rows(slug, flyers[slug], a.limit)
+        except httpx.HTTPError as e:  # one store's outage shouldn't stop the others
+            print(f"{slug}: flyer {flyers[slug]['id']} failed: {e!r}", file=sys.stderr)
+            failed.append(slug)
+            continue
         if not r:
             print(f"{slug}: flyer {flyers[slug]['id']} has no items", file=sys.stderr)
             continue
@@ -120,6 +133,8 @@ def main() -> None:
             print(f"{len(r):4d} items  {a.dry_run / path}")
         else:
             print(f"{len(r):4d} items  {upload(path, body)}")
+    if failed:
+        sys.exit(f"failed: {', '.join(failed)}")
 
 
 if __name__ == "__main__":

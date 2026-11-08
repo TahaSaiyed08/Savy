@@ -72,7 +72,7 @@ export function useItems() {
   );
 
   /** Edits a Pantry item's identity. Throws on failure so the edit sheet can stay open and offer a retry. */
-  const updateItem = useCallback(async (userItemId: string, fields: Schemas["ExtractedItem"]) => {
+  const updateItem = useCallback(async (userItemId: string, fields: Schemas["ItemPatch"]) => {
     const { data, error } = await api.PATCH("/items/{user_item_id}", {
       params: { header: withUser().header, path: { user_item_id: userItemId } },
       body: fields,

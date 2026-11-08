@@ -46,8 +46,11 @@ def _run(sql: str, params: dict) -> list[dict]:
     return [dict(zip(cols, row, strict=True)) for row in (r.result.data_array or [])]
 
 
-def query(sql: str, **params) -> list[dict]:
-    """Read. Falls back to the last good result for the same query if Databricks is slow or down."""
+def query(sql: str, fallback: bool = True, **params) -> list[dict]:
+    """Read. Falls back to the last good result for the same query if Databricks is slow or down.
+
+    fallback=False for reads right after a write: a stale answer there would undo the write in the user's eyes.
+    """
     key = (sql, tuple(sorted(params.items())))
     try:
         _last_good[key] = rows = _run(sql, params)
@@ -56,7 +59,7 @@ def query(sql: str, **params) -> list[dict]:
             _last_good.popitem(last=False)
         return rows
     except Exception:
-        if key in _last_good:
+        if fallback and key in _last_good:
             log.warning("serving cached result for %s", sql[:60], exc_info=True)
             return _last_good[key]
         raise

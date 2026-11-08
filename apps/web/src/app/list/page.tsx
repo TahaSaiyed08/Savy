@@ -34,8 +34,7 @@ type PendingSave = {
 
 export default function Pantry() {
   const { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch } = useItems();
-  // Loaded once so tapping a Pantry row can jump straight to that item's cheapest flyer match, without a
-  // network round trip per tap.
+  // The other stores' listings for the deal sheet; the tapped item's own cheapest comes with GET /items.
   const { data: deals } = useApi(() => api.GET("/deals", { params: withUser() }));
   const [flow, setFlow] = useState<Flow>({ step: "closed" });
   const [saving, setSaving] = useState(false);
@@ -48,14 +47,14 @@ export default function Pantry() {
   const controllerRef = useRef<ReturnType<typeof intakeController> | null>(null);
   const pendingSaveRef = useRef<PendingSave | null>(null);
 
+  // item.cheapest is ranked by the API on cost for the user's size, and comes back fresh after every edit.
   function openCheapestDeal(item: Schemas["ListItem"]) {
-    const matches = (deals ?? [])
-      .filter((d) => d.user_item_id === item.user_item_id)
-      .sort((a, b) => (a.unit_price ?? a.price ?? Infinity) - (b.unit_price ?? b.price ?? Infinity));
-    if (matches[0]) setActiveDeal(matches[0]);
+    if (item.cheapest) setActiveDeal(item.cheapest);
   }
   const otherStoresForActiveDeal = activeDeal
-    ? (deals ?? []).filter((d) => d.item_label === activeDeal.item_label && d.flyer_item_id !== activeDeal.flyer_item_id)
+    ? (deals ?? []).filter(
+        (d) => d.user_item_id === activeDeal.user_item_id && d.flyer_item_id !== activeDeal.flyer_item_id,
+      )
     : [];
 
   function releasePreview() {

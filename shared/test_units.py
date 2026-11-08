@@ -39,3 +39,4 @@ def test_unit_price_compares_across_pack_sizes():
 def test_per_weight():
     assert per_weight("$3.99/lb") and per_weight("Bananas 0.69 per kg")
     assert not per_weight("4 L") and not per_weight("$1.99 /L") and not per_weight("1 lb bag")
+    assert not per_weight("PC striploin steak 1 kg $13.21/kg")  # fixed pack, priced per kg on the tag
