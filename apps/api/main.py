@@ -343,7 +343,7 @@ def get_page(page_id: str) -> PageView:
     tiles = store.page_tiles(page_id)
     if not tiles:
         raise HTTPException(404, "page not in a current flyer")
-    # Page navigation comes from the store's other pages in the same flyer; a page with no neighbours returns null links.
+    # Page navigation comes from the store's other pages in the same flyer; with no neighbours the links are null.
     f = tiles[0]
     live = flyers_live.page_aspect(page_id) if store.MOCK and flyers_live.ENABLED else None  # Flipp's real page image
     pages = store.flyer_pages(f)
