@@ -156,7 +156,7 @@ class Receipt(BaseModel):
 # --- API shapes -----------------------------------------------------------
 
 
-class IntakeResponse(BaseModel):
+class IntakeResponse(BaseModel):  # Intake never saves: it parses, the person confirms, then POST /items stores
     """Parsed but NOT saved. The client confirms, then POSTs /items."""
 
     extraction: Extraction
@@ -174,6 +174,10 @@ class SaveItems(BaseModel):
     bought_at: datetime | None = None
 
 
+# A Deal and a FlyerListing carry the same listing facts. A Deal is attached to one of the person's items (with how
+# much it saves); a FlyerListing stands alone, for browsing and for the "closest match" list.
+
+
 class Deal(BaseModel):
     """One flyer listing that is exactly the user's item (logic.same_item), with where to find it in the flyer."""
 
@@ -188,6 +192,8 @@ class Deal(BaseModel):
     flyer_label: str  # what the flyer advertises
     unit: str | None = None
     week_start: date | None = None
+    # What buying the user's amount would cost at this listing, so a 2 L jug and a 4 L jug compare fairly. The cheapest
+    # deal is the one with the lowest cost, not the lowest sticker price.
     cost: float  # this listing's price for the user's size (logic.cost); cheapest = lowest cost
     page_id: str
     page_no: int | None = None
@@ -220,12 +226,17 @@ class FlyerListing(BaseModel):
     store_url: str | None = None
 
 
+# What the Pantry and Basket screens show: a saved item plus the best flyer match found for it right now.
+
+
 class ListItem(UserItem):
     """A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."""
 
     cheapest: Deal | None = None
     saves_vs_next: float | None = None  # how much less cheapest is than the next store's price for this item
     closest: list[FlyerListing] = []  # similar listings, only when there is no exact one
+    # An item can only be matched exactly when brand, item, variant and size are all known. This lists the blanks so the
+    # app can tell the person what to fill in.
     missing: list[Field4] = []  # empty (or unreadable size); all four are needed to match
 
 
@@ -235,6 +246,8 @@ class ItemPatch(BaseModel):
     model_config = {"str_strip_whitespace": True}
 
     brand: str | None = None
+    # PATCH semantics: only fields the client sent are applied. `item` is the one required column, so it can be left
+    # out but never blanked.
     item: str = Field(None, min_length=1)  # may be omitted, never null or blank
     variant: str | None = None
     size_qty: float | None = Field(None, gt=0)
@@ -271,6 +284,9 @@ class PageView(BaseModel):
     next_page_id: str | None = None
 
 
+# The Flyers tab: one row per product (many stores' listings collapsed into the cheapest) with filter chips.
+
+
 class FlyerGroup(BaseModel):
     """One product across this week's flyers, for the Flyers tab: brand/item/variant/size like a UserItem, plus
     its cheapest listing (tapping the row opens that store's page at that listing's tile)."""
@@ -294,6 +310,9 @@ class FlyerBrowsePage(BaseModel):
     stores: list[str]  # every store with a current listing, for the filter chips
     categories: list[str] = []  # categories among the listings (busiest first), for the filter chips
     ready: bool = True  # false while the first download for this postal code is still running
+
+
+# Ask (Genie): a question in, the answer and the table behind it out. Optional by design; see ask_enabled below.
 
 
 class AskRequest(BaseModel):
@@ -324,6 +343,9 @@ class FlyersStatus(BaseModel):
     source: Literal["flipp", "databricks", "canned"]
     error: str | None = None  # why the last refresh failed, if it did
     ask_enabled: bool = False  # Genie is set up, so POST /ask works
+
+
+# Basket totals: the same shopping list priced at each single store versus split across the cheapest store per item.
 
 
 class StoreTotal(BaseModel):
