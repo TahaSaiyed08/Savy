@@ -71,7 +71,7 @@ def _match_and_store(items: list[UserItem]) -> None:
 
 
 # Items whose matching failed, retried on the user's next /deals or /basket. Process memory, so a restart drops
-# them; the weekly re-match (plan WS2 step 8) is the durable sweep.
+# them; rematch_if_new_week below is the durable sweep.
 RETRY_AFTER = 60.0
 _unmatched: dict[UUID, tuple[float, list[UserItem]]] = {}
 _unmatched_lock = threading.Lock()
@@ -98,6 +98,39 @@ def _retry_rematch(user_id: UUID) -> None:
         _queue_rematch(user_id, pending, RETRY_AFTER)
 
 
+# Weekly re-match (plan WS2 step 8). main.py polls this every REMATCH_EVERY_SECONDS. It does real work only when
+# some store's current flyer week changed since the last sweep, or on the first poll after a restart (which also
+# covers items whose in-memory retry was lost). It re-matches every item, because an item already matched at one
+# store still needs matching against another store's new flyer; the idempotent INSERT keeps that duplicate-free.
+REMATCH_BATCH = 100
+_swept_weeks: str | None = None
+# A store's current flyer is its own latest week_start: chains start flyers on different days.
+_CURRENT_FLYERS = "(SELECT * FROM flyer_items QUALIFY week_start = max(week_start) OVER (PARTITION BY store))"
+
+
+def rematch_if_new_week() -> int:
+    """Re-match every user item when any store's flyer week changes. Returns how many items were matched.
+
+    The weeks are only marked swept when every batch succeeds, so a failure is retried on the next poll.
+    """
+    global _swept_weeks
+    if MOCK:
+        return 0
+    from apps.api import databricks_sql as db
+
+    weeks = db.query(
+        "SELECT concat_ws(',', sort_array(collect_list(concat(store, '=', CAST(week AS STRING))))) AS weeks "
+        "FROM (SELECT store, max(week_start) AS week FROM flyer_items GROUP BY store)")[0]["weeks"]
+    if not weeks or weeks == _swept_weeks:
+        return 0
+    items = [UserItem(**r) for r in db.query("SELECT * FROM user_items")]
+    for i in range(0, len(items), REMATCH_BATCH):
+        _match_and_store(items[i:i + REMATCH_BATCH])
+    _swept_weeks = weeks
+    log.info("re-matched %d items for flyer weeks %s", len(items), weeks)
+    return len(items)
+
+
 def _search(u: UserItem) -> list[tuple] | None:
     """AI Search top-3 as (item_id, brand, score), or None if the index is unavailable."""
     from apps.api import databricks_sql as db
@@ -114,15 +147,14 @@ def _search(u: UserItem) -> list[tuple] | None:
 
 
 def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
-    """One query for all items: top-3 this-week flyer items containing the item name, same brand ranked first."""
+    """One query for all items: top-3 per store from each store's current flyer, same brand ranked first."""
     from apps.api import databricks_sql as db
 
     rows = db.query(
         f"WITH u AS (SELECT inline(from_json(:rows, '{_LIKE_ROWS}'))) "
-        "SELECT u.user_item_id, f.item_id, f.brand FROM u JOIN flyer_items f "
-        "ON f.week_start = (SELECT max(week_start) FROM flyer_items) "
-        "AND lower(f.item) LIKE concat('%', lower(u.item), '%') "
-        "QUALIFY row_number() OVER (PARTITION BY u.user_item_id "
+        f"SELECT u.user_item_id, f.item_id, f.brand FROM u JOIN {_CURRENT_FLYERS} f "
+        "ON lower(f.item) LIKE concat('%', lower(u.item), '%') "
+        "QUALIFY row_number() OVER (PARTITION BY u.user_item_id, f.store "
         "ORDER BY coalesce(lower(f.brand) = lower(u.brand), false) DESC, f.item_id) <= 3",
         rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item} for u in items]),
     )

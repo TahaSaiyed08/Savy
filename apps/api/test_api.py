@@ -229,6 +229,50 @@ def test_failed_matching_is_retried_on_next_deals(monkeypatch):
     assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
 
 
+def test_weekly_rematch_sweeps_each_new_week_once(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"weeks": "Save-On-Foods=2026-11-05", "fail": False}
+    batches, item_reads = [], []
+    items = [{"user_item_id": f"u{n}", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+              "added_at": datetime.now(UTC)} for n in range(250)]
+
+    def query(sql, **p):
+        if "max(week_start)" in sql:
+            return [{"weeks": state["weeks"]}]
+        item_reads.append(state["weeks"])
+        return items
+
+    def match(batch):
+        if state["fail"]:
+            raise RuntimeError("warehouse down")
+        batches.append(len(batch))
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_weeks", None)
+    monkeypatch.setattr(store, "_match_and_store", match)
+    monkeypatch.setattr(databricks_sql, "query", query)
+
+    assert store.rematch_if_new_week() == 250 and batches == [100, 100, 50]
+    assert store.rematch_if_new_week() == 0 and len(item_reads) == 1  # same weeks: no item scan
+
+    state.update(weeks="PriceSmart=2026-11-07,Save-On-Foods=2026-11-05", fail=True)  # one store's new flyer
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()
+    state["fail"] = False
+    assert store.rematch_if_new_week() == 250  # the failed sweep is retried, not marked done
+    assert len(item_reads) == 3
+
+
+def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):
+    from apps.api import store
+
+    monkeypatch.setattr(store, "MOCK", True)
+    assert store.rematch_if_new_week() == 0
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):
