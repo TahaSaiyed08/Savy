@@ -8,10 +8,10 @@ export const PASSCODE_HEADER = "x-demo-passcode";
 export const MIN_PASSCODE_LENGTH = 8;
 
 /**
- * The visitor's IP, for the API's per-IP upload limit. Cloudflare sets cf-connecting-ip on every tunnelled request
- * and overwrites any value the client sent, so it's trusted when present. Otherwise this is the address Next.js
- * recorded: it fills x-forwarded-for from the socket only when the client sent none, so a direct (non-tunnel)
- * client can still spoof it. The passcode gate limits who can reach the proxy at all.
+ * The visitor's IP, for per-IP limits. Cloudflare sets cf-connecting-ip on every tunnelled request and overwrites
+ * any value the client sent, so it's trusted when present. Otherwise this is the address Next.js recorded: it fills
+ * x-forwarded-for from the socket only when the client sent none. A client that reaches this server directly can
+ * forge both, which is why `make web` binds to 127.0.0.1 and the passcode lockout also has a global cap.
  */
 export function visitorIp(headers: Headers): string {
   const cf = headers.get("cf-connecting-ip")?.trim();
@@ -44,8 +44,10 @@ export function unlocked(headers: Headers, cookie: string | undefined, passcode:
 // Wrong-passcode attempts per visitor IP, so the passcode can't be brute-forced through the tunnel.
 const WINDOW_MS = 15 * 60_000;
 const MAX_FAILURES = 10;
+const MAX_GLOBAL_FAILURES = 100; // across all IPs: a forged IP per guess still can't sweep the passcode
 const MAX_TRACKED = 10_000; // bound memory if many IPs guess
 const failures = new Map<string, number[]>();
+let allFailures: number[] = [];
 
 function recent(ip: string, now: number): number[] {
   const kept = (failures.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
@@ -54,13 +56,20 @@ function recent(ip: string, now: number): number[] {
   return kept;
 }
 
+function recentAll(now: number): number[] {
+  allFailures = allFailures.filter((t) => now - t < WINDOW_MS);
+  return allFailures;
+}
+
+/** Only new unlocks are refused: a device that already has the cookie keeps working during a guessing attack. */
 export function tooManyFailures(ip: string, now = Date.now()): boolean {
-  return recent(ip, now).length >= MAX_FAILURES;
+  return recent(ip, now).length >= MAX_FAILURES || recentAll(now).length >= MAX_GLOBAL_FAILURES;
 }
 
 export function recordFailure(ip: string, now = Date.now()): void {
   if (failures.size >= MAX_TRACKED && !failures.has(ip)) failures.delete(failures.keys().next().value!);
   failures.set(ip, [...recent(ip, now), now]);
+  allFailures.push(now);
 }
 
 /** Why the proxy can't serve anyone yet, or null if DEMO_PASSCODE is usable. Fails closed when unset. */
@@ -72,4 +81,5 @@ export function passcodeProblem(passcode: string | undefined): string | null {
 
 export function resetFailuresForTests(): void {
   failures.clear();
+  allFailures = [];
 }

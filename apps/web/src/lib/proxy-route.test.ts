@@ -85,6 +85,17 @@ describe("Databricks App proxy", () => {
     const wrong = { [PASSCODE_HEADER]: "wrong guess", "cf-connecting-ip": "203.0.113.9" };
     for (let n = 0; n < 10; n++) expect((await call(get, wrong)).status).toBe(401);
     expect((await call(get, wrong)).status).toBe(429);
+    // Locked out means locked out: the right passcode must not get through, or guessing is unlimited.
+    expect((await call(get, { [PASSCODE_HEADER]: PASS, "cf-connecting-ip": "203.0.113.9" })).status).toBe(429);
+    expect(upstream).toEqual([]);
+  });
+
+  it("caps wrong guesses globally, so a forged IP per guess can't sweep the passcode", async () => {
+    const get = await loadProxy(PASS);
+    const guess = (n: number) => ({ [PASSCODE_HEADER]: "wrong guess", "cf-connecting-ip": `198.51.100.${n}` });
+    for (let n = 0; n < 100; n++) expect((await call(get, guess(n))).status).toBe(401);
+    expect((await call(get, guess(200))).status).toBe(429);
+    expect((await call(get, { [PASSCODE_HEADER]: PASS, "cf-connecting-ip": "198.51.100.201" })).status).toBe(429);
     expect(upstream).toEqual([]);
   });
 });

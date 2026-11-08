@@ -46,6 +46,7 @@ _UPDATE_ITEM = (
     "UPDATE user_items SET brand = IF(:set_brand, :brand, brand), item = IF(:set_item, :item, item), "
     "variant = IF(:set_variant, :variant, variant), size_qty = IF(:set_size_qty, CAST(:size_qty AS DOUBLE), size_qty), "
     "size_unit = IF(:set_size_unit, :size_unit, size_unit) WHERE user_id = :user_id AND user_item_id = :user_item_id")
+_SET_SOURCE = "UPDATE user_items SET source = :source WHERE user_id = :user_id AND user_item_id = :user_item_id"
 _ADD_TO_BASKET = (
     "INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp(), NULL WHERE EXISTS (SELECT 1 FROM "
     "user_items WHERE user_id = :user_id AND user_item_id = :user_item_id) AND NOT EXISTS (SELECT 1 FROM "
@@ -206,6 +207,20 @@ def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch, postal: str 
         db.execute(_REMOVE_FROM_BASKET, **ids)
     if patch.done is not None:
         db.execute(_SET_DONE, done=patch.done, **ids)
+    return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
+
+
+def set_source(user_id: UUID, user_item_id: str, source: str, postal: str | None = None) -> UserItem | None:
+    if MOCK:
+        items = _mock_items(user_id, postal)
+        for n, i in enumerate(items):
+            if i.user_item_id == user_item_id:
+                items[n] = i.model_copy(update={"source": source})
+                return items[n]
+        return None
+    from apps.api import databricks_sql as db
+
+    db.execute(_SET_SOURCE, source=source, user_id=str(user_id), user_item_id=user_item_id)
     return next((i for i in list_items(user_id, fresh=True) if i.user_item_id == user_item_id), None)
 
 

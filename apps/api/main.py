@@ -21,6 +21,7 @@ from apps.api.models import (
     Deal,
     Extraction,
     FlyerBrowsePage,
+    FlyerItem,
     FlyersStatus,
     IntakeResponse,
     ItemPatch,
@@ -122,6 +123,7 @@ def postal_code(
 
 
 Postal = Annotated[str, Depends(postal_code)]
+_IDENTITY = {"brand", "item", "variant", "size_qty", "size_unit"}
 Ext = Annotated[Extractor, Depends(get_extractor)]
 
 
@@ -192,14 +194,18 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
+def _flyers_or_none(postal: str) -> list[FlyerItem]:
+    try:
+        return store.flyer_items(postal)
+    except Exception:
+        log.warning("flyers unavailable for postal %s", postal, exc_info=True)
+        return []
+
+
 def _listed(items: list[UserItem], postal: str) -> list[ListItem]:
     """Adds each item's cheapest listing. Flyers being down must not fail the list or a write that already landed
     (the client would retry a saved POST and duplicate it), so the items come back with cheapest=None instead."""
-    try:
-        flyers = store.flyer_items(postal)
-    except Exception:
-        log.warning("flyers unavailable; returning %d items without deals", len(items), exc_info=True)
-        flyers = []
+    flyers = _flyers_or_none(postal)
     deals = logic.deals_for(items, flyers)
     best, saves = logic.cheapest(deals), logic.saves_vs_next(deals)
     return [ListItem(**i.model_dump(), cheapest=best.get(i.user_item_id), saves_vs_next=saves.get(i.user_item_id),
@@ -216,6 +222,10 @@ def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
 @app.post("/items")
 def save_items(user_id: UserId, body: SaveItems, postal: Postal) -> list[ListItem]:
     """Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing)."""
+    if body.source == "flyer":  # the client's claim, and it would exempt these items from needing all four fields
+        flyers = _flyers_or_none(postal)
+        if not all(logic.is_listing(i, flyers) for i in body.items):
+            body = body.model_copy(update={"source": "manual"})
     return _listed(store.add_items(user_id, body, postal), postal)
 
 
@@ -226,6 +236,9 @@ def update_item(user_id: UserId, user_item_id: str, body: ItemPatch, postal: Pos
     item = store.update_item(user_id, user_item_id, body, postal)
     if item is None:
         raise HTTPException(404, "no such item")
+    edited = body.model_fields_set & _IDENTITY
+    if item.source == "flyer" and edited and not logic.is_listing(item, _flyers_or_none(postal)):
+        item = store.set_source(user_id, user_item_id, "manual", postal) or item  # no flyer lists this any more
     return _listed([item], postal)[0]
 
 
