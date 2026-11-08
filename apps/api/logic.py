@@ -112,7 +112,7 @@ def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[
             item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
             page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
             image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
-            flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
+            store_url=f.store_url,
         ) for f in best.values()]
     return out
 
@@ -135,28 +135,12 @@ def _browse_key(f: FlyerItem) -> tuple:
             size.unit if size else None)
 
 
-_FLIPP_PAGE = re.compile(r"flipp-(\d+)-\d+")
-_FLIPP_ITEM = re.compile(r"flipp-(\d+)")
-
-
-def flyer_url(f: FlyerItem) -> str | None:
-    """The original flyer, on Flipp's website. Only listings that came from Flipp have one."""
-    m = _FLIPP_PAGE.fullmatch(f.page_id)
-    return f"https://flipp.com/en-ca/flyer/{m[1]}" if m else None
-
-
-def item_url(f: FlyerItem) -> str | None:
-    """That flyer opened at this item."""
-    m = _FLIPP_ITEM.fullmatch(f.item_id)
-    return f"https://flipp.com/en-ca/item/{m[1]}" if m else None
-
-
 def listing(f: FlyerItem) -> FlyerListing:
     return FlyerListing(
         label=label(f), store=f.store, price=f.price, unit_price=f.unit_price, unit=f.unit, flyer_item_id=f.item_id,
         page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
         image_url=f.image_url, regular_price=f.regular_price, conditions=f.conditions,
-        flyer_url=flyer_url(f), item_url=item_url(f), store_url=f.store_url,
+        store_url=f.store_url,
     )
 
 

@@ -78,57 +78,26 @@ test("add item: words that match nothing can still be added as typed", async ({ 
   await expect(page.getByText("zzzzqq").first()).toBeVisible();
 });
 
-test("price match: links out to the original flyer and the store's own page", async ({ page }) => {
-  // Canned flyers (CI) have no Flipp ids, so hand the screen a listing that does: what matters is that the links
-  // reach the page, open in a new tab, and carry nothing but the address.
+test("price match: links to the store's own page, and nothing links to the flyer source", async ({ page }) => {
   await page.route("**/api/flyer-items**", async (route) => {
     const body = await (await route.fetch()).json();
-    Object.assign(body.items[0].cheapest, {
-      flyer_url: "https://flipp.com/en-ca/flyer/8214584",
-      item_url: "https://flipp.com/en-ca/item/1052141198",
-      store_url: "https://www.nofrills.ca/p/20921434001_EA",
-    });
+    Object.assign(body.items[0].cheapest, { store_url: "https://www.nofrills.ca/p/20921434001_EA" });
     await route.fulfill({ json: body });
   });
   await page.goto("/flyers");
   await page.locator("li button").first().click();
 
   const screen = page.getByRole("heading", { name: "Price match" }).locator("../..");
-  const flyer = screen.getByRole("link", { name: /^Open .* flyer for /i });
-  await expect(flyer).toHaveAttribute("href", "https://flipp.com/en-ca/item/1052141198");
-  await expect(flyer).toHaveAttribute("target", "_blank");
-  await expect(flyer).toHaveAttribute("rel", /noopener/);
   await expect(screen.getByRole("link", { name: /View on .*'s site/ })).toHaveAttribute("href", "https://www.nofrills.ca/p/20921434001_EA");
+  await expect(page.locator('a[href*="flipp"]')).toHaveCount(0);
 });
 
-test("price match: no original-flyer link when the listing didn't come from Flipp", async ({ page }) => {
-  await page.route("**/api/flyer-items**", async (route) => {
-    const body = await (await route.fetch()).json();
-    for (const g of body.items) Object.assign(g.cheapest, { flyer_url: null, item_url: null, store_url: null });
-    await route.fulfill({ json: body });
-  });
+test("flyers: tapping a row's image opens Price Match in the app", async ({ page }) => {
   await page.goto("/flyers");
-  await page.locator("li button").first().click();
+  await expect(page.locator('a[href*="flipp"]')).toHaveCount(0);
+  await page.locator("li button").first().click({ position: { x: 30, y: 30 } }); // over the thumbnail
   await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Open .* flyer for /i })).toHaveCount(0);
-});
-
-test("flyers: tapping a row's image opens the flyer link; tapping its text opens Price Match", async ({ page, context }) => {
-  await page.route("**/api/flyer-items**", async (route) => {
-    const body = await (await route.fetch()).json();
-    Object.assign(body.items[0].cheapest, { item_url: "https://flipp.com/en-ca/item/1052141198" });
-    await route.fulfill({ json: body });
-  });
-  await page.goto("/flyers");
-
-  const image = page.getByRole("link", { name: /^Open .* flyer for /i }).first();
-  const [popup] = await Promise.all([context.waitForEvent("page"), image.click()]);
-  await expect.poll(() => popup.url()).toBe("https://flipp.com/en-ca/item/1052141198");
-  await popup.close();
-  await expect(page.getByRole("heading", { name: "Price match" })).toHaveCount(0);
-
-  await page.locator("li button").first().click();
-  await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
+  expect(page.context().pages()).toHaveLength(1);
 });
 
 test("ask: the Ask button only appears when Genie is set up, and shows its answer and table", async ({ page }) => {

@@ -234,9 +234,9 @@ export default function Flyers() {
               const added = inPantry(g);
               const meta = itemMeta(g);
               return (
-                <li key={g.cheapest.flyer_item_id} className="row-sep relative flex items-center gap-3 pl-3.5" style={{ "--sep": "70px" } as React.CSSProperties}>
-                  <Thumb src={g.cheapest.image_url} href={g.cheapest.item_url ?? g.cheapest.flyer_url} store={g.cheapest.store} item={g.item} />
-                  <button type="button" onClick={() => open(g)} className="flex min-h-[3.75rem] min-w-0 flex-1 items-center gap-3 py-3 text-left">
+                <li key={g.cheapest.flyer_item_id} className="row-sep relative flex items-center" style={{ "--sep": "70px" } as React.CSSProperties}>
+                  <button type="button" onClick={() => open(g)} className="flex min-h-[3.75rem] min-w-0 flex-1 items-center gap-3 py-3 pl-3.5 text-left">
+                    <Thumb src={g.cheapest.image_url} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{g.item}</span>
                       {meta && <span className="block truncate text-[15px] text-label-2">{meta}</span>}

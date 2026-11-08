@@ -23,8 +23,6 @@ export type Listing = {
   validFrom?: string | null;
   validTo?: string | null;
   imageUrl?: string | null;
-  flyerUrl?: string | null; // the whole original flyer, on Flipp
-  itemUrl?: string | null; // that flyer opened at this item
   storeUrl?: string | null; // the store's own page for it
 };
 
@@ -45,14 +43,14 @@ export const fromDeal = (d: Schemas["Deal"]): Listing => ({
   pageId: d.page_id, flyerItemId: d.flyer_item_id, store: d.store, label: d.flyer_label, price: d.price,
   regularPrice: d.regular_price, unitPrice: d.unit_price, unit: d.unit, conditions: d.conditions,
   validFrom: d.valid_from, validTo: d.valid_to, imageUrl: d.image_url,
-  flyerUrl: d.flyer_url, itemUrl: d.item_url, storeUrl: d.store_url,
+  storeUrl: d.store_url,
 });
 
 export const fromListing = (l: Schemas["FlyerListing"]): Listing => ({
   pageId: l.page_id, flyerItemId: l.flyer_item_id, store: l.store, label: l.label, price: l.price,
   regularPrice: l.regular_price, unitPrice: l.unit_price, unit: l.unit, conditions: l.conditions,
   validFrom: l.valid_from, validTo: l.valid_to, imageUrl: l.image_url,
-  flyerUrl: l.flyer_url, itemUrl: l.item_url, storeUrl: l.store_url,
+  storeUrl: l.store_url,
 });
 
 export const matchFor = (from: string, item: Schemas["ListItem"]): MatchTarget => ({
@@ -197,14 +195,13 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
   const left = daysLeft(listing.validTo);
   const range = validRange(listing.validFrom, listing.validTo);
   const expired = left != null && left < 0;
-  const original = listing.itemUrl ?? listing.flyerUrl;
   const extra = [listing.conditions, listing.unitPrice != null && listing.unit ? `${money(listing.unitPrice)} / ${listing.unit.replace(/^(\d+)/, "$1 ")}` : null].filter(Boolean).join(" · ");
   return (
     <div className="mx-4 mb-2 flex shrink-0 flex-col gap-1.5 rounded-[16px] bg-elevated p-3.5">
       {expired && listing.validTo && <p className="-mx-1 rounded-[8px] bg-destructive px-2 py-1 text-[13px] font-semibold text-white">Expired {shortDate(listing.validTo)}</p>}
       {closestNote && <p className="text-[13px] text-label-2">Closest match, not your exact item</p>}
       <div className="flex items-center gap-3">
-        <Thumb src={listing.imageUrl} href={original} store={listing.store} item={listing.label} />
+        <Thumb src={listing.imageUrl} />
         <p className="min-w-0 flex-1 truncate text-[17px] font-semibold">{listing.store}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -326,9 +323,9 @@ function PriceMatchScreen({ target, onClose }: { target: MatchTarget; onClose: (
                 <h2 className="px-3.5 pb-1.5 text-[13px] uppercase text-label-2">Closest this week</h2>
                 <ul className="overflow-hidden rounded-[14px] bg-elevated">
                   {target.closest.map((l) => (
-                    <li key={l.flyerItemId} className="row-sep relative flex min-h-[3.75rem] items-center gap-3 px-3.5 py-3" style={{ "--sep": "70px" } as React.CSSProperties}>
-                      <Thumb src={l.imageUrl} href={l.itemUrl ?? l.flyerUrl} store={l.store} item={l.label} />
-                      <button type="button" onClick={() => setPicked(l)} className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left">
+                    <li key={l.flyerItemId} className="relative">
+                      <button type="button" onClick={() => setPicked(l)} className="row-sep relative flex min-h-[3.75rem] w-full items-center gap-3 px-3.5 py-3 text-left" style={{ "--sep": "70px" } as React.CSSProperties}>
+                        <Thumb src={l.imageUrl} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">{l.label}</span>
                           <span className="block truncate text-[15px] text-label-2">{l.store}</span>

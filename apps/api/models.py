@@ -160,8 +160,6 @@ class Deal(BaseModel):
     image_url: str | None = None  # the tile's cutout from the flyer
     regular_price: float | None = None
     conditions: str | None = None
-    flyer_url: str | None = None  # the whole original flyer, on Flipp
-    item_url: str | None = None  # the same flyer opened at this item
     store_url: str | None = None  # the store's own page for it
 
 
@@ -182,8 +180,6 @@ class FlyerListing(BaseModel):
     image_url: str | None = None
     regular_price: float | None = None
     conditions: str | None = None
-    flyer_url: str | None = None
-    item_url: str | None = None
     store_url: str | None = None
 
 

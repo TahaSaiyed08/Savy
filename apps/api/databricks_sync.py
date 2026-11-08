@@ -13,7 +13,6 @@ import os
 import time
 from datetime import UTC, datetime
 
-from apps.api import logic
 from apps.api.models import FlyerItem
 
 log = logging.getLogger(__name__)
@@ -115,7 +114,7 @@ def _row(f: FlyerItem) -> dict:
         "size_unit": f.size_unit,
         "price": f.price, "regular_price": f.regular_price, "unit_price": f.unit_price, "unit": f.unit,
         "conditions": f.conditions, "raw_text": f.raw_text, "page_no": f.page_no, "image_url": f.image_url,
-        "flyer_url": logic.flyer_url(f), "item_url": logic.item_url(f), "store_url": f.store_url,
+        "flyer_url": None, "item_url": None, "store_url": f.store_url,  # the app doesn't link out to the flyer source
     }
 
 

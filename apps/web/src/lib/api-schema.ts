@@ -409,10 +409,6 @@ export interface components {
             regular_price?: number | null;
             /** Conditions */
             conditions?: string | null;
-            /** Flyer Url */
-            flyer_url?: string | null;
-            /** Item Url */
-            item_url?: string | null;
             /** Store Url */
             store_url?: string | null;
         };
@@ -527,10 +523,6 @@ export interface components {
             regular_price?: number | null;
             /** Conditions */
             conditions?: string | null;
-            /** Flyer Url */
-            flyer_url?: string | null;
-            /** Item Url */
-            item_url?: string | null;
             /** Store Url */
             store_url?: string | null;
         };

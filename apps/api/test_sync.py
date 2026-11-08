@@ -46,8 +46,7 @@ def test_push_creates_tables_replaces_the_postal_codes_listings_and_merges_histo
         assert params["postal"] == "V6T1Z4" and params["fetched_at"] == NOW.isoformat()
     rows = json.loads(replace[1]["rows"])
     assert [r["item_id"] for r in rows] == ["flipp-70"]  # the priceless listing is not sent
-    assert rows[0]["flyer_url"] == "https://flipp.com/en-ca/flyer/7"
-    assert rows[0]["item_url"] == "https://flipp.com/en-ca/item/70"
+    assert rows[0]["flyer_url"] is None and rows[0]["item_url"] is None  # no links to the flyer source
     assert rows[0]["store_url"] == "https://www.nofrills.ca/p/1"
 
 
