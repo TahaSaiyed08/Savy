@@ -3,137 +3,187 @@
 /* HIG design tokens. Values are iOS system colors; Design owns these, components only reference them. */
 :root {
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
-  --bg: #f2f2f7; /* systemGroupedBackground */
+  --bg: #f6f5f1; /* systemGroupedBackground */
   --elevated: #ffffff; /* secondarySystemGroupedBackground */
-  --label: #000000;
+  --label: #1b1c19;
   /* iOS's own secondaryLabel (0.6) computes to ~3.3-3.4:1 against --bg/--elevated -- below WCAG AA's 4.5:1
      for normal text. 0.75 clears both (~4.9:1 on --bg, ~5.2:1 on --elevated) while staying visually
      "secondary" next to --label. Dark mode's 0.6 already clears AA against black and elevated (~6:1+), so
      it's left as-is. */
-  --label-2: rgb(60 60 67 / 0.75);
-  --separator: rgb(60 60 67 / 0.16);
-  --tint: #1e8e4e; /* Basil: your actions and progress */
+  --label-2: rgb(55 56 48 / 0.74);
+  --separator: rgb(55 56 48 / 0.14);
+  --tint: #177a45; /* Basil: your actions and progress */
   --on-tint: #ffffff;
-  --fill: #e5e5ea;
-  --toast: #d1d1d6;
-  --price-tag: #ffd84d;
-  --on-price-tag: #231b00;
-  --clock: #c24e00;
-  --info: #007aff;
-  --skeleton: #e7e7ec;
-  --skeleton-hi: #f3f3f6;
-  --tint-soft: rgb(30 142 78 / 0.12);
-  --destructive: #e5261c;
+  --fill: #ebe9e2;
+  --toast: #dedcd4;
+  --price-tag: #ffd23f;
+  --on-price-tag: #2a2000;
+  --clock: #b04a00;
+  --info: #1f6fd1;
+  --skeleton: #e9e7e0;
+  --skeleton-hi: #f4f3ee;
+  --tint-soft: rgb(23 122 69 / 0.12);
+  --destructive: #d0281f;
   --tap: 2.75rem; /* 44pt at default text size; scales with Dynamic Type */
   --motion: 180ms; /* HIG: transitions under 200ms */
 
   /* Intake confirm: low-confidence items flagged for review (systemOrange family). */
-  --warning-bg: #fff7e8;
-  --warning-border: #fed7aa;
-  --warning-text: #9a3412;
+  --warning-bg: #fff6e5;
+  --warning-border: #f6d29b;
+  --warning-text: #8f3a0c;
   /* Deal savings badges, "exact match" accents. */
-  --savings-bg: #ecfdf5;
-  --savings-border: #a7f3d0;
-  --savings-text: #166534;
+  --savings-bg: #e9f6ee;
+  --savings-border: #b5dec5;
+  --savings-text: #145c35;
+  /* Deal summary card, store dots and category thumbnail tints. */
+  --soft: rgb(23 122 69 / 0.10);
+  --soft-border: rgb(23 122 69 / 0.22);
+  --store-1: #d0402f;
+  --store-2: #2b6fb8;
+  --store-3: #d99a00;
+  --store-4: #7a5bc0;
+  --store-5: #1f9aa0;
+  --cat-1-bg: rgb(43 111 184 / 0.14); --cat-1-fg: #2b6fb8;
+  --cat-2-bg: rgb(217 154 0 / 0.18); --cat-2-fg: #8a5d00;
+  --cat-3-bg: rgb(208 64 47 / 0.13); --cat-3-fg: #b8392a;
+  --cat-4-bg: rgb(23 122 69 / 0.13); --cat-4-fg: #177a45;
+  --cat-5-bg: rgb(154 107 47 / 0.16); --cat-5-fg: #80561c;
 
   /* Elevation. Raw values, remapped below; components use the shadow-* utilities, never these directly. */
-  --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04); /* InsetGroup, cards */
+  --shadow-card-raw: 0 6px 18px 0 rgba(30, 40, 20, 0.08); /* InsetGroup, cards */
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15); /* bottom sheet */
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07); /* chips, thumbnails */
-  --shadow-tint-raw: 0 8px 18px 0 rgba(30, 142, 78, 0.2); /* primary button, selected chip */
+  --shadow-tint-raw: 0 8px 18px 0 rgba(23, 122, 69, 0.2); /* primary button, selected chip */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #000000;
-    --elevated: #1c1c1e;
-    --label: #ffffff;
-    --label-2: rgb(235 235 245 / 0.62);
-    --separator: rgb(84 84 88 / 0.55);
-  --tint: #4cd787;
-  --on-tint: #03210f;
-  --fill: #2c2c2e;
-  --toast: #3a3a3c;
-  --price-tag: #ffd84d;
-  --on-price-tag: #231b00;
-  --clock: #ff9f0a;
-  --info: #0a84ff;
-  --skeleton: #232325;
-  --skeleton-hi: #2f2f32;
-  --tint-soft: rgb(76 215 135 / 0.14);
-    --destructive: #ff453a;
-    --warning-bg: rgb(255 159 10 / 0.12);
-    --warning-border: rgb(255 159 10 / 0.3);
-    --warning-text: #ff9f0a;
-    --savings-bg: #13351d;
-    --savings-border: transparent;
-    --savings-text: #4cd787;
+    --bg: #0e1110;
+    --elevated: #181c1a;
+    --label: #f3f4f0;
+    --label-2: rgb(228 230 220 / 0.64);
+    --separator: rgb(228 230 220 / 0.14);
+  --tint: #5fd68e;
+  --on-tint: #04200f;
+  --fill: #242927;
+  --toast: #2f3532;
+  --price-tag: #ffd23f;
+  --on-price-tag: #2a2000;
+  --clock: #ffa23a;
+  --info: #5aa2ff;
+  --skeleton: #212624;
+  --skeleton-hi: #2d3330;
+  --tint-soft: rgb(95 214 142 / 0.14);
+    --destructive: #ff6259;
+    --warning-bg: rgb(255 162 58 / 0.12);
+    --warning-border: rgb(255 162 58 / 0.3);
+    --warning-text: #ffa23a;
+    --savings-bg: #14301f;
+    --savings-border: rgb(95 214 142 / 0.3);
+    --savings-text: #5fd68e;
+  --soft: rgb(95 214 142 / 0.12);
+  --soft-border: rgb(95 214 142 / 0.26);
+  --store-1: #ff7a68;
+  --store-2: #6fa8e8;
+  --store-3: #f2c14e;
+  --store-4: #a58be6;
+  --store-5: #4cc3c9;
+  --cat-1-bg: rgb(125 180 240 / 0.16); --cat-1-fg: #8fbff5;
+  --cat-2-bg: rgb(240 190 60 / 0.16); --cat-2-fg: #f2c14e;
+  --cat-3-bg: rgb(255 120 100 / 0.15); --cat-3-fg: #ff8b7a;
+  --cat-4-bg: rgb(95 214 142 / 0.15); --cat-4-fg: #5fd68e;
+  --cat-5-bg: rgb(214 170 110 / 0.16); --cat-5-fg: #d9b27a;
     --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
     --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
     --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
-    --shadow-tint-raw: 0 8px 18px 0 rgba(76, 215, 135, 0.25);
+    --shadow-tint-raw: 0 8px 18px 0 rgba(95, 214, 142, 0.22);
   }
 }
 
 /* Dev-only state gallery: manual theme override independent of the OS setting. */
 :root[data-force-theme="dark"] {
-  --bg: #000000;
-  --elevated: #1c1c1e;
-  --label: #ffffff;
-  --label-2: rgb(235 235 245 / 0.62);
-  --separator: rgb(84 84 88 / 0.55);
-  --tint: #4cd787;
-  --on-tint: #03210f;
-  --fill: #2c2c2e;
-  --toast: #3a3a3c;
-  --price-tag: #ffd84d;
-  --on-price-tag: #231b00;
-  --clock: #ff9f0a;
-  --info: #0a84ff;
-  --skeleton: #232325;
-  --skeleton-hi: #2f2f32;
-  --tint-soft: rgb(76 215 135 / 0.14);
-  --destructive: #ff453a;
-  --warning-bg: rgb(255 159 10 / 0.12);
-  --warning-border: rgb(255 159 10 / 0.3);
-  --warning-text: #ff9f0a;
-  --savings-bg: #13351d;
-  --savings-border: transparent;
-  --savings-text: #4cd787;
+  --bg: #0e1110;
+  --elevated: #181c1a;
+  --label: #f3f4f0;
+  --label-2: rgb(228 230 220 / 0.64);
+  --separator: rgb(228 230 220 / 0.14);
+  --tint: #5fd68e;
+  --on-tint: #04200f;
+  --fill: #242927;
+  --toast: #2f3532;
+  --price-tag: #ffd23f;
+  --on-price-tag: #2a2000;
+  --clock: #ffa23a;
+  --info: #5aa2ff;
+  --skeleton: #212624;
+  --skeleton-hi: #2d3330;
+  --tint-soft: rgb(95 214 142 / 0.14);
+  --destructive: #ff6259;
+  --warning-bg: rgb(255 162 58 / 0.12);
+  --warning-border: rgb(255 162 58 / 0.3);
+  --warning-text: #ffa23a;
+  --savings-bg: #14301f;
+  --savings-border: rgb(95 214 142 / 0.3);
+  --savings-text: #5fd68e;
+  --soft: rgb(95 214 142 / 0.12);
+  --soft-border: rgb(95 214 142 / 0.26);
+  --store-1: #ff7a68;
+  --store-2: #6fa8e8;
+  --store-3: #f2c14e;
+  --store-4: #a58be6;
+  --store-5: #4cc3c9;
+  --cat-1-bg: rgb(125 180 240 / 0.16); --cat-1-fg: #8fbff5;
+  --cat-2-bg: rgb(240 190 60 / 0.16); --cat-2-fg: #f2c14e;
+  --cat-3-bg: rgb(255 120 100 / 0.15); --cat-3-fg: #ff8b7a;
+  --cat-4-bg: rgb(95 214 142 / 0.15); --cat-4-fg: #5fd68e;
+  --cat-5-bg: rgb(214 170 110 / 0.16); --cat-5-fg: #d9b27a;
   --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
-  --shadow-tint-raw: 0 8px 18px 0 rgba(76, 215, 135, 0.25);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(95, 214, 142, 0.22);
   color-scheme: dark;
 }
 :root[data-force-theme="light"] {
-  --bg: #f2f2f7;
+  --bg: #f6f5f1;
   --elevated: #ffffff;
-  --label: #000000;
-  --label-2: rgb(60 60 67 / 0.75);
-  --separator: rgb(60 60 67 / 0.16);
-  --tint: #1e8e4e; /* Basil: your actions and progress */
+  --label: #1b1c19;
+  --label-2: rgb(55 56 48 / 0.74);
+  --separator: rgb(55 56 48 / 0.14);
+  --tint: #177a45; /* Basil: your actions and progress */
   --on-tint: #ffffff;
-  --fill: #e5e5ea;
-  --toast: #d1d1d6;
-  --price-tag: #ffd84d;
-  --on-price-tag: #231b00;
-  --clock: #c24e00;
-  --info: #007aff;
-  --skeleton: #e7e7ec;
-  --skeleton-hi: #f3f3f6;
-  --tint-soft: rgb(30 142 78 / 0.12);
-  --destructive: #e5261c;
-  --warning-bg: #fff7e8;
-  --warning-border: #fed7aa;
-  --warning-text: #9a3412;
-  --savings-bg: #ecfdf5;
-  --savings-border: #a7f3d0;
-  --savings-text: #166534;
-  --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04);
+  --fill: #ebe9e2;
+  --toast: #dedcd4;
+  --price-tag: #ffd23f;
+  --on-price-tag: #2a2000;
+  --clock: #b04a00;
+  --info: #1f6fd1;
+  --skeleton: #e9e7e0;
+  --skeleton-hi: #f4f3ee;
+  --tint-soft: rgb(23 122 69 / 0.12);
+  --destructive: #d0281f;
+  --warning-bg: #fff6e5;
+  --warning-border: #f6d29b;
+  --warning-text: #8f3a0c;
+  --savings-bg: #e9f6ee;
+  --savings-border: #b5dec5;
+  --savings-text: #145c35;
+  /* Deal summary card, store dots and category thumbnail tints. */
+  --soft: rgb(23 122 69 / 0.10);
+  --soft-border: rgb(23 122 69 / 0.22);
+  --store-1: #d0402f;
+  --store-2: #2b6fb8;
+  --store-3: #d99a00;
+  --store-4: #7a5bc0;
+  --store-5: #1f9aa0;
+  --cat-1-bg: rgb(43 111 184 / 0.14); --cat-1-fg: #2b6fb8;
+  --cat-2-bg: rgb(217 154 0 / 0.18); --cat-2-fg: #8a5d00;
+  --cat-3-bg: rgb(208 64 47 / 0.13); --cat-3-fg: #b8392a;
+  --cat-4-bg: rgb(23 122 69 / 0.13); --cat-4-fg: #177a45;
+  --cat-5-bg: rgb(154 107 47 / 0.16); --cat-5-fg: #80561c;
+  --shadow-card-raw: 0 6px 18px 0 rgba(30, 40, 20, 0.08);
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15);
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07);
-  --shadow-tint-raw: 0 8px 18px 0 rgba(30, 142, 78, 0.2);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(23, 122, 69, 0.2);
   color-scheme: light;
 }
 
@@ -160,6 +210,8 @@
   --color-savings-bg: var(--savings-bg);
   --color-savings-border: var(--savings-border);
   --color-savings-text: var(--savings-text);
+  --color-soft: var(--soft);
+  --color-soft-border: var(--soft-border);
   --shadow-card: var(--shadow-card-raw);
   --shadow-sheet: var(--shadow-sheet-raw);
   --shadow-soft: var(--shadow-soft-raw);

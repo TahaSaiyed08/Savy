@@ -24,7 +24,7 @@ export function useToast() {
             toast.undo?.();
             setToast(null);
           }}
-          className="-my-2 min-h-tap shrink-0 font-semibold text-tint"
+          className="-my-2 min-h-tap shrink-0 font-semibold text-label"
         >
           Undo
         </button>
