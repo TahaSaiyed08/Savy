@@ -1,4 +1,4 @@
-.PHONY: setup dev api web tunnel test lint gen-api check-api flipp-snapshot
+.PHONY: setup dev api web tunnel test lint gen-api check-api flipp-snapshot databricks-setup
 
 setup:            ## install Python (uv) and web (npm) dependencies
 	uv sync
@@ -33,5 +33,8 @@ gen-api:          ## regenerate the typed web client after changing apps/api
 check-api: gen-api  ## CI: fail if the committed client is stale
 	git diff --exit-code apps/web/openapi.json apps/web/src/lib/api-schema.ts
 
-flipp-snapshot:    ## refresh mock data with this week's real prices from Flipp (apps/api/data/flipp_snapshot.json)
-	uv run python apps/api/snapshot_flipp.py
+flipp-snapshot:    ## download this week's flyers now (the API also does this itself); POSTAL=M5V2T6 for elsewhere
+	uv run python apps/api/snapshot_flipp.py $(POSTAL)
+
+databricks-setup:  ## ONE-TIME, writes to your workspace: Delta tables, the saved flyers, and the Genie space (see the script)
+	uv run --env-file .env python databricks/setup/create_genie_space.py

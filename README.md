@@ -46,8 +46,8 @@ On your phone: run `make tunnel` in a second terminal (`brew install cloudflared
 mic and home-screen install need HTTPS anyway. The URL changes each run.
 
 Other targets: `make test` (pytest), `make lint` (ruff + eslint + tsc), `make gen-api` (regenerate the typed web
-client after changing the API; CI fails if you forget), `make flipp-snapshot` (refresh mock data with this
-week's real flyer prices — see "Flyer data: Flipp integration" below).
+client after changing the API; CI fails if you forget), `make flipp-snapshot` (download this week's
+flyers now — see "Flyer data: Flipp integration" below).
 
 ## Environment variables
 
@@ -84,11 +84,27 @@ to the Volume with each item's exact tile box, page, price and valid dates; the 
 `flyer_items` (see `docs/plan.md`, WS1 step 6). Page images saved by hand still go through
 `databricks/fetchers/common.py <store> <dir>`.
 
-**Mock mode with real prices**: `make flipp-snapshot` (`apps/api/snapshot_flipp.py`) saves all five stores'
-current flyers to `apps/api/data/flipp_snapshot.json`. `apps/api/mock_data.py` loads it if present, falling
-back to the small canned list otherwise — the API never touches the network for this at request time; refresh
-the snapshot by hand whenever you want fresher demo prices.
+**Mock mode with live flyers** (the default for `make dev`): the API pulls this week's real flyers from Flipp's public
+API (`apps/api/flyers_live.py`), one set per postal code. It saves them under `apps/api/data/` (gitignored), serves
+requests from memory, and checks Flipp hourly, re-downloading only the stores whose flyer changed (everything once
+a day). The first run for a postal code downloads in the background, about 30 seconds; the app shows a loading state
+until it lands. The app sends the shopper's postal code in an `X-Postal-Code` header (set from the Flyers tab);
+`DEFAULT_POSTAL_CODE` (default `V6T1Z4`) is used when there is none. `make flipp-snapshot [POSTAL=M5V2T6]`
+forces a download now. `REALDEAL_LIVE_FLYERS=0` turns this off and serves the small canned list (tests and CI do).
+Flipp's API is unofficial, so treat this as demo data.
 
+**Real flyer pages.** Flipp's website draws each flyer from a pyramid of 256 px image tiles
+(`f.wishabi.net/<flyer path>/<level>_<col>_<row>.jpg`, rows counted from the bottom). When someone opens a page, the
+API fetches just that page's tiles, stitches them into the real printed page (about 1 MB) and keeps it under
+`apps/api/data/pages/`; the Price Match screen shows it with the item outlined. Pages next to it are drawn in the
+background, and pages of ended flyers are deleted. If Flipp has no tiles for a page, the app lays the page out from the
+items' own pictures instead.
+
+**Databricks and Genie (optional, you switch it on).** `make databricks-setup` is a one-time step that writes to your
+workspace: it creates `realdeal.core.live_listings` and `price_history`, loads the flyers already downloaded, and creates
+a Genie space over them. Then set `REALDEAL_DATABRICKS_SYNC=1` in `.env` and every refresh keeps the tables current
+(price history builds up week by week). Once the space exists the Flyers tab shows an **Ask** button: plain-language
+questions answered by Genie, with the table and the SQL it wrote. Nothing is written to Databricks unless you do this.
 
 **Optional live match fallback**: if AI Search and the SQL `LIKE` fallback both come up empty for a saved
 item, `apps/api/store.py` tries one cached (1 h) Flipp search and scores results with the usual

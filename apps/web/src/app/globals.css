@@ -11,9 +11,19 @@
      "secondary" next to --label. Dark mode's 0.6 already clears AA against black and elevated (~6:1+), so
      it's left as-is. */
   --label-2: rgb(60 60 67 / 0.75);
-  --separator: rgb(60 60 67 / 0.29);
-  --tint: #248a3d; /* systemGreen, accessible variant: savings */
-  --destructive: #ff3b30;
+  --separator: rgb(60 60 67 / 0.16);
+  --tint: #1e8e4e; /* Basil: your actions and progress */
+  --on-tint: #ffffff;
+  --fill: #e5e5ea;
+  --toast: #d1d1d6;
+  --price-tag: #ffd84d;
+  --on-price-tag: #231b00;
+  --clock: #c24e00;
+  --info: #007aff;
+  --skeleton: #e7e7ec;
+  --skeleton-hi: #f3f3f6;
+  --tint-soft: rgb(30 142 78 / 0.12);
+  --destructive: #e5261c;
   --tap: 2.75rem; /* 44pt at default text size; scales with Dynamic Type */
   --motion: 180ms; /* HIG: transitions under 200ms */
 
@@ -30,7 +40,7 @@
   --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04); /* InsetGroup, cards */
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15); /* bottom sheet */
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07); /* chips, thumbnails */
-  --shadow-tint-raw: 0 8px 18px 0 rgba(36, 138, 61, 0.2); /* primary button, selected chip */
+  --shadow-tint-raw: 0 8px 18px 0 rgba(30, 142, 78, 0.2); /* primary button, selected chip */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,20 +48,30 @@
     --bg: #000000;
     --elevated: #1c1c1e;
     --label: #ffffff;
-    --label-2: rgb(235 235 245 / 0.6);
-    --separator: rgb(84 84 88 / 0.6);
-    --tint: #30d158;
+    --label-2: rgb(235 235 245 / 0.62);
+    --separator: rgb(84 84 88 / 0.55);
+  --tint: #4cd787;
+  --on-tint: #03210f;
+  --fill: #2c2c2e;
+  --toast: #3a3a3c;
+  --price-tag: #ffd84d;
+  --on-price-tag: #231b00;
+  --clock: #ff9f0a;
+  --info: #0a84ff;
+  --skeleton: #232325;
+  --skeleton-hi: #2f2f32;
+  --tint-soft: rgb(76 215 135 / 0.14);
     --destructive: #ff453a;
     --warning-bg: rgb(255 159 10 / 0.12);
     --warning-border: rgb(255 159 10 / 0.3);
     --warning-text: #ff9f0a;
     --savings-bg: #13351d;
     --savings-border: transparent;
-    --savings-text: #30d158;
+    --savings-text: #4cd787;
     --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
     --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
     --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
-    --shadow-tint-raw: 0 8px 18px 0 rgba(48, 209, 88, 0.25);
+    --shadow-tint-raw: 0 8px 18px 0 rgba(76, 215, 135, 0.25);
   }
 }
 
@@ -60,20 +80,30 @@
   --bg: #000000;
   --elevated: #1c1c1e;
   --label: #ffffff;
-  --label-2: rgb(235 235 245 / 0.6);
-  --separator: rgb(84 84 88 / 0.6);
-  --tint: #30d158;
+  --label-2: rgb(235 235 245 / 0.62);
+  --separator: rgb(84 84 88 / 0.55);
+  --tint: #4cd787;
+  --on-tint: #03210f;
+  --fill: #2c2c2e;
+  --toast: #3a3a3c;
+  --price-tag: #ffd84d;
+  --on-price-tag: #231b00;
+  --clock: #ff9f0a;
+  --info: #0a84ff;
+  --skeleton: #232325;
+  --skeleton-hi: #2f2f32;
+  --tint-soft: rgb(76 215 135 / 0.14);
   --destructive: #ff453a;
   --warning-bg: rgb(255 159 10 / 0.12);
   --warning-border: rgb(255 159 10 / 0.3);
   --warning-text: #ff9f0a;
   --savings-bg: #13351d;
   --savings-border: transparent;
-  --savings-text: #30d158;
+  --savings-text: #4cd787;
   --shadow-card-raw: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.5);
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.2);
-  --shadow-tint-raw: 0 8px 18px 0 rgba(48, 209, 88, 0.25);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(76, 215, 135, 0.25);
   color-scheme: dark;
 }
 :root[data-force-theme="light"] {
@@ -81,9 +111,19 @@
   --elevated: #ffffff;
   --label: #000000;
   --label-2: rgb(60 60 67 / 0.75);
-  --separator: rgb(60 60 67 / 0.29);
-  --tint: #248a3d;
-  --destructive: #ff3b30;
+  --separator: rgb(60 60 67 / 0.16);
+  --tint: #1e8e4e; /* Basil: your actions and progress */
+  --on-tint: #ffffff;
+  --fill: #e5e5ea;
+  --toast: #d1d1d6;
+  --price-tag: #ffd84d;
+  --on-price-tag: #231b00;
+  --clock: #c24e00;
+  --info: #007aff;
+  --skeleton: #e7e7ec;
+  --skeleton-hi: #f3f3f6;
+  --tint-soft: rgb(30 142 78 / 0.12);
+  --destructive: #e5261c;
   --warning-bg: #fff7e8;
   --warning-border: #fed7aa;
   --warning-text: #9a3412;
@@ -93,7 +133,7 @@
   --shadow-card-raw: 0 4px 16px 0 rgba(0, 0, 0, 0.04);
   --shadow-sheet-raw: 0px -8px 24px 0px rgba(0, 0, 0, 0.15);
   --shadow-soft-raw: 0 6px 16px 0 rgba(0, 0, 0, 0.07);
-  --shadow-tint-raw: 0 8px 18px 0 rgba(36, 138, 61, 0.2);
+  --shadow-tint-raw: 0 8px 18px 0 rgba(30, 142, 78, 0.2);
   color-scheme: light;
 }
 
@@ -105,6 +145,14 @@
   --color-label-2: var(--label-2);
   --color-separator: var(--separator);
   --color-tint: var(--tint);
+  --color-on-tint: var(--on-tint);
+  --color-tint-soft: var(--tint-soft);
+  --color-fill: var(--fill);
+  --color-toast: var(--toast);
+  --color-price-tag: var(--price-tag);
+  --color-on-price-tag: var(--on-price-tag);
+  --color-clock: var(--clock);
+  --color-info: var(--info);
   --color-destructive: var(--destructive);
   --color-warning-bg: var(--warning-bg);
   --color-warning-border: var(--warning-border);
@@ -149,3 +197,29 @@ body {
     transform: translateY(0);
   }
 }
+
+/* One sweep across a layout-matched block; no sweep under Reduce Motion. */
+.skeleton {
+  background: linear-gradient(90deg, var(--skeleton) 25%, var(--skeleton-hi) 50%, var(--skeleton) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.2s linear infinite;
+}
+@keyframes skeleton-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--skeleton); }
+}
+
+/* Inset divider drawn inside the row, so it starts at the text and slides with it. */
+.row-sep::after {
+  content: "";
+  position: absolute;
+  left: var(--sep, 16px);
+  right: 0;
+  bottom: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+li:last-child > .row-sep::after { display: none; }

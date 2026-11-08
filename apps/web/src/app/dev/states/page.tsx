@@ -16,7 +16,7 @@ import { ReceiptLoading } from "@/components/list/ReceiptLoading";
 import { ReceiptConfirmSheet } from "@/components/list/ReceiptConfirmSheet";
 import { PickProductSheet } from "@/components/list/PickProductSheet";
 import { TypeOrSaySheet } from "@/components/list/TypeOrSaySheet";
-import { DealDetailSheet } from "@/components/deals/DealDetailSheet";
+import { PriceMatch, fromDeal } from "@/components/deals/PriceMatch";
 import { getForcedTheme, setForcedTheme } from "@/components/ForceTheme";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -94,7 +94,7 @@ export default function DevStates() {
   }
 
   async function clearList() {
-    for (const i of items ?? []) await deleteItem(i.user_item_id);
+    for (const i of items ?? []) deleteItem(i.user_item_id);
   }
   async function restoreDemoItems() {
     await addItems({ items: DEMO_SEED, source: "manual" });
@@ -115,7 +115,7 @@ export default function DevStates() {
               key={t}
               type="button"
               onClick={() => pickTheme(t)}
-              className={`flex-1 rounded-xl px-3 py-2.5 text-[15px] capitalize ${theme === t ? "bg-tint font-semibold text-white" : "bg-bg text-label"}`}
+              className={`flex-1 rounded-xl px-3 py-2.5 text-[15px] capitalize ${theme === t ? "bg-tint font-semibold text-on-tint" : "bg-bg text-label"}`}
             >
               {t}
             </button>
@@ -127,7 +127,7 @@ export default function DevStates() {
         <DevButton href="/list" label="Populated" note="Screen 1 — the real route" />
         <DevButton
           label="Empty"
-          note="Screen 2 — clears your real list so /list, /deals and /basket all show their empty state"
+          note="Screen 2 — clears your real list so /list, /flyers and /basket all show their empty state"
           onClick={clearList}
         />
         <DevButton label="Restore demo items" note="Undo the above" onClick={restoreDemoItems} />
@@ -155,11 +155,11 @@ export default function DevStates() {
         <DevButton label="Parsed" note="Screen 10 — type anything in Idle and press Enter" onClick={() => setSheet("type-idle")} />
       </Section>
 
-      <Section title="Add item(s)">
-        <DevButton href="/deals" label="Populated" note="Screen 11" />
-        <DevButton label="Milk deal detail" note="Screen 12 — uses your real cheapest deal" onClick={() => setSheet("deal-detail")} />
+      <Section title="Flyers">
+        <DevButton href="/flyers" label="Populated" note="Screen 11" />
+        <DevButton label="Milk flyer page" note="Screen 12 — uses your real cheapest deal" onClick={() => setSheet("deal-detail")} />
         <DevButton label="Empty" note="Screen 13 — see Pantry → Empty above" onClick={clearList} />
-        <DevButton href="/deals" label="Dark" note="Screen 17 — set theme to Dark above, then open" />
+        <DevButton href="/flyers" label="Dark" note="Screen 17 — set theme to Dark above, then open" />
       </Section>
 
       <Section title="Basket">
@@ -171,8 +171,8 @@ export default function DevStates() {
       <div className="mx-4 mb-10 flex flex-col gap-4">
         <p className="text-[13px] font-semibold text-label-2 uppercase">Static previews (no data required)</p>
         <EmptyState icon={<ReceiptText size={52} />} title="Snap a receipt to fill your list." primaryLabel="Scan a receipt" secondaryLabel="Or add one item" />
-        <EmptyState icon={<Tag size={52} />} title="No deals on your items this week." subtitle="New flyers land every Thursday." />
-        <EmptyState icon={<ShoppingCart size={52} />} title="Add items to compare stores." primaryLabel="Add items" />
+        <EmptyState icon={<Tag size={52} />} title="No flyers this week." subtitle="New flyers land every Thursday." />
+        <EmptyState icon={<ShoppingCart size={52} />} title="Move items here to take them shopping." subtitle="Swipe a Pantry item and tap Basket." primaryLabel="Go to Pantry" />
       </div>
 
       <AddMethodsSheet open={sheet === "methods"} onClose={() => setSheet(null)} onPick={() => setSheet(null)} />
@@ -220,7 +220,7 @@ export default function DevStates() {
       )}
 
       {sheet === "deal-detail" && firstDeal && (
-        <DealDetailSheet deal={firstDeal} others={(deals ?? []).filter((d) => d.item_label === firstDeal.item_label && d.flyer_item_id !== firstDeal.flyer_item_id)} onClose={() => setSheet(null)} />
+        <PriceMatch target={{ from: "Dev states", name: firstDeal.item_label, meta: "", listing: fromDeal(firstDeal) }} onClose={() => setSheet(null)} />
       )}
     </>
   );

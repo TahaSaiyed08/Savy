@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { EmptyState, InsetGroup, LargeTitle, RetryButton, Skeleton, Status } from "@/components/ui";
+import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, SearchField, Status } from "@/components/ui";
 import { Plus, ReceiptText } from "@/components/icons";
 import { AddMethodsSheet, type AddMethod } from "@/components/list/AddMethodsSheet";
 import { IntakeError, ReceiptLoading } from "@/components/list/ReceiptLoading";
@@ -9,11 +9,11 @@ import { PickProductSheet } from "@/components/list/PickProductSheet";
 import { TypeOrSaySheet } from "@/components/list/TypeOrSaySheet";
 import { EditItemSheet } from "@/components/list/EditItemSheet";
 import { ListRow } from "@/components/list/ListRow";
-import { DealDetailSheet } from "@/components/deals/DealDetailSheet";
+import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
+import { useToast } from "@/components/Toast";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { downscaleImage } from "@/lib/downscale";
 import { intakeController, intakeErrorMessage } from "@/lib/intake";
-import { useApi } from "@/lib/use-api";
 import { useItems } from "@/lib/use-items";
 
 type Flow =
@@ -32,32 +32,14 @@ type PendingSave = {
   boughtAt?: string | null;
 };
 
-function ListSkeleton() {
-  return (
-    <section className="mx-4 mb-6">
-      <Skeleton className="mb-1.5 ml-4 h-3 w-20" />
-      <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
-        {[0, 1, 2, 3].map((i) => (
-          <li key={i} className="flex min-h-[4.625rem] items-center gap-2 border-b border-separator px-4 py-3 last:border-b-0">
-            <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <Skeleton className="h-[17px] w-2/3" />
-              <Skeleton className="h-[15px] w-1/3" />
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 export default function Pantry() {
   const { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch } = useItems();
-  // The other stores' listings for the deal sheet; the tapped item's own cheapest comes with GET /items.
-  const { data: deals } = useApi(() => api.GET("/deals", { params: withUser() }));
   const [flow, setFlow] = useState<Flow>({ step: "closed" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | undefined>();
-  const [activeDeal, setActiveDeal] = useState<Schemas["Deal"] | null>(null);
+  const [match, setMatch] = useState<MatchTarget | null>(null);
+  const [search, setSearch] = useState("");
+  const toast = useToast();
   const [editingItem, setEditingItem] = useState<Schemas["ListItem"] | null>(null);
   const receiptInput = useRef<HTMLInputElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -65,15 +47,25 @@ export default function Pantry() {
   const controllerRef = useRef<ReturnType<typeof intakeController> | null>(null);
   const pendingSaveRef = useRef<PendingSave | null>(null);
 
-  // item.cheapest is ranked by the API on cost for the user's size, and comes back fresh after every edit.
-  function openCheapestDeal(item: Schemas["ListItem"]) {
-    if (item.cheapest) setActiveDeal(item.cheapest);
-  }
-  const otherStoresForActiveDeal = activeDeal
-    ? (deals ?? []).filter(
-        (d) => d.user_item_id === activeDeal.user_item_id && d.flyer_item_id !== activeDeal.flyer_item_id,
-      )
-    : [];
+  const needle = search.trim().toLowerCase();
+  const shown = (items ?? []).filter((i) => !needle || [i.brand, i.item, i.variant].join(" ").toLowerCase().includes(needle));
+  const onSale = shown.filter((i) => i.cheapest);
+  const others = shown.filter((i) => !i.cheapest);
+
+  const row = (i: Schemas["ListItem"]) => (
+    <ListRow
+      key={i.user_item_id}
+      item={i}
+      onTap={() => setMatch(matchFor("Pantry", i))}
+      onToggleBasket={() => {
+        const next = !i.in_basket;
+        setBasket(i.user_item_id, next);
+        toast.show(next ? "Moved to basket" : "Removed from basket", () => setBasket(i.user_item_id, !next));
+      }}
+      onEdit={() => setEditingItem(i)}
+      onDelete={() => toast.show("Removed", deleteItem(i.user_item_id))}
+    />
+  );
 
   function releasePreview() {
     if (previewUrlRef.current) {
@@ -200,14 +192,13 @@ export default function Pantry() {
         }
       />
 
-      {loading && (
-        <>
-          <p role="status" className="sr-only">
-            Loading…
-          </p>
-          <ListSkeleton />
-        </>
+      {!!items?.length && (
+        <p className="-mt-1 px-4 pb-3 text-[13px] text-label-2">
+          {items.length} item{items.length === 1 ? "" : "s"} · {items.filter((i) => i.cheapest).length} on sale
+        </p>
       )}
+      {!!items?.length && <SearchField value={search} onChange={setSearch} placeholder="Search pantry" />}
+      {loading && !items && <ListSkeleton />}
       <Status error={error} />
       {error && <RetryButton onRetry={refetch} />}
       {deleteError && <p className="px-8 pb-4 text-center text-[13px] text-destructive">{deleteError}</p>}
@@ -215,7 +206,8 @@ export default function Pantry() {
       {!loading && !error && items?.length === 0 && (
         <EmptyState
           icon={<ReceiptText size={52} />}
-          title="Snap a receipt to fill your list."
+          title="Start your pantry"
+          subtitle="Add things you buy often and we'll watch the flyers for you."
           primaryLabel="Scan a receipt"
           onPrimary={() => receiptInput.current?.click()}
           secondaryLabel="Or add one item"
@@ -223,20 +215,9 @@ export default function Pantry() {
         />
       )}
 
-      {!!items?.length && (
-        <InsetGroup header={`${items.length} item${items.length === 1 ? "" : "s"}`}>
-          {items.map((i) => (
-            <ListRow
-              key={i.user_item_id}
-              item={i}
-              onTap={() => openCheapestDeal(i)}
-              onToggleBasket={() => setBasket(i.user_item_id, !i.in_basket)}
-              onEdit={() => setEditingItem(i)}
-              onDelete={() => deleteItem(i.user_item_id)}
-            />
-          ))}
-        </InsetGroup>
-      )}
+      {onSale.length > 0 && <InsetGroup header="On sale this week">{onSale.map(row)}</InsetGroup>}
+      {others.length > 0 && <InsetGroup header={onSale.length ? "Everything else" : undefined}>{others.map(row)}</InsetGroup>}
+      {toast.node}
 
       <input
         ref={receiptInput}
@@ -314,7 +295,7 @@ export default function Pantry() {
         />
       )}
 
-      <DealDetailSheet deal={activeDeal} others={otherStoresForActiveDeal} onClose={() => setActiveDeal(null)} />
+      <PriceMatch target={match} onClose={() => setMatch(null)} />
 
       <EditItemSheet
         item={editingItem}

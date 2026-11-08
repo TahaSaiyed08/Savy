@@ -1,22 +1,27 @@
 """Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
+import asyncio
 import ipaddress
 import logging
 import os
 import time
-from collections import deque
+from collections import Counter, deque
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 import anthropic
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response, UploadFile
 
-from apps.api import logic, store, stt
+from apps.api import flyers_live, genie, logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
 from apps.api.models import (
+    AskRequest,
+    AskResponse,
     Basket,
     Deal,
     Extraction,
+    FlyerBrowsePage,
+    FlyersStatus,
     IntakeResponse,
     ItemPatch,
     ListItem,
@@ -35,7 +40,10 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    keeper = asyncio.create_task(flyers_live.keep_fresh()) if store.MOCK else None
     yield
+    if keeper:
+        keeper.cancel()
 
 
 app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
@@ -85,7 +93,35 @@ async def rate_limit(request: Request) -> None:
             del _hits[k]
 
 
+# Genie runs a warehouse and spends Databricks quota, so cap it per client like the intake calls.
+ASK_LIMIT = int(os.getenv("ASK_LIMIT_PER_HOUR", "20"))
+_ask_hits: dict[str, deque[float]] = {}
+
+
+async def ask_limit(request: Request) -> None:
+    now = time.monotonic()
+    key = _client_key(request.client.host if request.client else "unknown")
+    q = _ask_hits.setdefault(key, deque())
+    _prune(q, now)
+    if len(q) >= ASK_LIMIT:
+        retry = str(int(_WINDOW - (now - q[0])) + 1)
+        raise HTTPException(429, "Too many questions; try again later", {"Retry-After": retry})
+    q.append(now)
+
+
 UserId = Annotated[UUID, Header(alias="X-User-Id", description="UUID generated on the device")]
+
+
+def postal_code(
+    x_postal_code: Annotated[str | None, Header(description="Where to look for flyers, e.g. V6T 1Z4")] = None,
+) -> str:
+    code = flyers_live.normalize(x_postal_code) if x_postal_code else flyers_live.DEFAULT_POSTAL
+    if code is None:
+        raise HTTPException(422, "Postal code should look like V6T 1Z4")
+    return code
+
+
+Postal = Annotated[str, Depends(postal_code)]
 Ext = Annotated[Extractor, Depends(get_extractor)]
 
 
@@ -153,44 +189,47 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
-def _listed(items: list[UserItem]) -> list[ListItem]:
+def _listed(items: list[UserItem], postal: str) -> list[ListItem]:
     """Adds each item's cheapest listing. Flyers being down must not fail the list or a write that already landed
     (the client would retry a saved POST and duplicate it), so the items come back with cheapest=None instead."""
     try:
-        flyers = store.flyer_items()
+        flyers = store.flyer_items(postal)
     except Exception:
         log.warning("flyers unavailable; returning %d items without deals", len(items), exc_info=True)
         flyers = []
-    best = logic.cheapest(logic.deals_for(items, flyers))
-    return [ListItem(**i.model_dump(), cheapest=best.get(i.user_item_id), missing=logic.missing(i)) for i in items]
+    deals = logic.deals_for(items, flyers)
+    best, saves = logic.cheapest(deals), logic.saves_vs_next(deals)
+    return [ListItem(**i.model_dump(), cheapest=best.get(i.user_item_id), saves_vs_next=saves.get(i.user_item_id),
+                     closest=[] if i.user_item_id in best else logic.closest(i, flyers), missing=logic.missing(i))
+            for i in items]
 
 
 @app.get("/items")
-def get_items(user_id: UserId) -> list[ListItem]:
+def get_items(user_id: UserId, postal: Postal) -> list[ListItem]:
     """My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}."""
-    return _listed(store.list_items(user_id))
+    return _listed(store.list_items(user_id, postal=postal), postal)
 
 
 @app.post("/items")
-def save_items(user_id: UserId, body: SaveItems) -> list[ListItem]:
+def save_items(user_id: UserId, body: SaveItems, postal: Postal) -> list[ListItem]:
     """Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing)."""
-    return _listed(store.add_items(user_id, body))
+    return _listed(store.add_items(user_id, body, postal), postal)
 
 
 @app.patch("/items/{user_item_id}")
-def update_item(user_id: UserId, user_item_id: str, body: ItemPatch) -> ListItem:
+def update_item(user_id: UserId, user_item_id: str, body: ItemPatch, postal: Postal) -> ListItem:
     """Edit an item (brand/item/variant/size_qty/size_unit; unknown fields such as price are ignored), or move it to
     or from the Basket with in_basket. Only the fields sent are changed."""
-    item = store.update_item(user_id, user_item_id, body)
+    item = store.update_item(user_id, user_item_id, body, postal)
     if item is None:
         raise HTTPException(404, "no such item")
-    return _listed([item])[0]
+    return _listed([item], postal)[0]
 
 
 @app.post("/items/{user_item_id}/basket")
-def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket) -> ListItem:
+def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket, postal: Postal) -> ListItem:
     """Moves a My List item into (or out of) the Basket. Same as PATCH with only in_basket."""
-    return update_item(user_id, user_item_id, ItemPatch(in_basket=body.in_basket))
+    return update_item(user_id, user_item_id, ItemPatch(in_basket=body.in_basket), postal)
 
 
 @app.delete("/items/{user_item_id}", status_code=204)
@@ -199,16 +238,58 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
 
 
 @app.get("/deals")
-def get_deals(user_id: UserId) -> list[Deal]:
+def get_deals(user_id: UserId, postal: Postal) -> list[Deal]:
     """Every store's cheapest exact listing for every item on My List."""
-    return logic.deals_for(store.list_items(user_id), store.flyer_items())
+    return logic.deals_for(store.list_items(user_id, postal=postal), store.flyer_items(postal))
 
 
 @app.get("/basket")
-def get_basket(user_id: UserId) -> Basket:
+def get_basket(user_id: UserId, postal: Postal) -> Basket:
     """Store comparison for the Basket (items with in_basket) only."""
-    items = [i for i in store.list_items(user_id) if i.in_basket]
-    return logic.basket(items, logic.deals_for(items, store.flyer_items()))
+    items = [i for i in store.list_items(user_id, postal=postal) if i.in_basket]
+    return logic.basket(items, logic.deals_for(items, store.flyer_items(postal)))
+
+
+@app.get("/flyers/status")
+def flyers_status(postal: Postal) -> FlyersStatus:
+    """Whether this week's flyers near a postal code are loaded. The first request for a new postal code starts the
+    download (tens of seconds); the app polls this until ready."""
+    flyers = store.flyer_items(postal)
+    live = store.MOCK and flyers_live.ENABLED
+    feed = flyers_live.feed(postal) if live else None
+    return FlyersStatus(
+        postal=postal, ready=flyers_live.ready(postal) if live else True, refreshing=bool(feed and feed.refreshing),
+        listings=len(flyers), stores=sorted({f.store for f in flyers}), fetched_at=feed.fetched_at if feed else None,
+        source="flipp" if live else "canned" if store.MOCK else "databricks", error=feed.error if feed else None,
+        ask_enabled=genie.available(),
+    )
+
+
+@app.post("/ask", dependencies=[Depends(ask_limit)])
+def ask_genie(body: AskRequest, postal: Postal) -> AskResponse:
+    """Ask Genie about this week's deals in plain words. 503 until the Genie space exists."""
+    if not genie.available():
+        raise HTTPException(503, "Genie isn't set up yet")
+    try:
+        return genie.ask(body.question, postal, body.conversation_id)
+    except genie.GenieError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+@app.get("/flyer-items")
+def browse_flyer_items(postal: Postal, q: str | None = None,
+                       store_name: Annotated[str | None, Query(alias="store")] = None,
+                       sort: Literal["savings", "price", "ends", "az", "relevance"] = "savings", page: int = 1,
+                       page_size: int = 30, category: str | None = None) -> FlyerBrowsePage:
+    """The Flyers tab: every current listing near the postal code, one row per product at its cheapest store."""
+    page, page_size = max(1, page), max(1, min(page_size, 100))
+    flyers = store.flyer_items(postal)
+    groups = logic.browse_flyers(flyers, q, store_name, sort, category)
+    start = (page - 1) * page_size
+    return FlyerBrowsePage(items=groups[start:start + page_size], page=page, page_size=page_size, total=len(groups),
+                           stores=sorted({f.store for f in flyers}),
+                           categories=[c for c, _ in Counter(f.category for f in flyers if f.category).most_common()],
+                           ready=not (store.MOCK and flyers_live.ENABLED) or flyers_live.ready(postal))
 
 
 @app.get("/flyer-pages/{page_id}")
@@ -218,9 +299,14 @@ def get_page(page_id: str) -> PageView:
     if not tiles:
         raise HTTPException(404, "page not in a current flyer")
     f = tiles[0]
+    live = flyers_live.page_aspect(page_id) if store.MOCK and flyers_live.ENABLED else None  # Flipp's real page image
+    pages = store.flyer_pages(f)
+    at = pages.index(page_id) if page_id in pages else 0
     return PageView(
+        page_count=len(pages), prev_page_id=pages[at - 1] if at else None,
+        next_page_id=pages[at + 1] if at + 1 < len(pages) else None,
         page_id=page_id, store=f.store, page_no=f.page_no, valid_from=f.valid_from, valid_to=f.valid_to,
-        image_url=f"/flyer-pages/{page_id}/image" if f.image_path else None, aspect=f.page_aspect,
+        image_url=f"/flyer-pages/{page_id}/image" if f.image_path or live else None, aspect=live or f.page_aspect,
         tiles=[Tile(item_id=t.item_id, bbox=t.bbox, image_url=t.image_url, label=t.raw_text or logic.label(t),
                     price=t.price) for t in tiles if t.bbox],
     )
@@ -228,11 +314,15 @@ def get_page(page_id: str) -> PageView:
 
 @app.get("/flyer-pages/{page_id}/image", response_class=Response,
          responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}})
-def get_page_image(page_id: str) -> Response:
-    """The page JPEG/PNG from the flyers Volume (only pages that came from page images, not Flipp)."""
+def get_page_image(page_id: str, background: BackgroundTasks) -> Response:
+    """The real printed page: from the flyers Volume (Databricks) or stitched from Flipp's image tiles (live)."""
     path = next((t.image_path for t in store.page_tiles(page_id) if t.image_path), None)
     if not path:
-        raise HTTPException(404, "no page image")
+        jpeg = flyers_live.page_jpeg(page_id) if store.MOCK and flyers_live.ENABLED else None
+        if jpeg is None:
+            raise HTTPException(404, "no page image")
+        background.add_task(flyers_live.warm_neighbours, page_id)  # after the response, so this page isn't slower
+        return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
     image = store.page_image(path)
     if image is None:
         raise HTTPException(404, "page image missing from the Volume")

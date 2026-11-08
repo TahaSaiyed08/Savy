@@ -195,6 +195,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/flyers/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Flyers Status
+         * @description Whether this week's flyers near a postal code are loaded. The first request for a new postal code starts the
+         *     download (tens of seconds); the app polls this until ready.
+         */
+        get: operations["flyers_status_flyers_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask Genie
+         * @description Ask Genie about this week's deals in plain words. 503 until the Genie space exists.
+         */
+        post: operations["ask_genie_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flyer-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browse Flyer Items
+         * @description The Flyers tab: every current listing near the postal code, one row per product at its cheapest store.
+         */
+        get: operations["browse_flyer_items_flyer_items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/flyer-pages/{page_id}": {
         parameters: {
             query?: never;
@@ -224,7 +285,7 @@ export interface paths {
         };
         /**
          * Get Page Image
-         * @description The page JPEG/PNG from the flyers Volume (only pages that came from page images, not Flipp).
+         * @description The real printed page: from the flyers Volume (Databricks) or stitched from Flipp's image tiles (live).
          */
         get: operations["get_page_image_flyer_pages__page_id__image_get"];
         put?: never;
@@ -239,6 +300,37 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AskRequest */
+        AskRequest: {
+            /** Question */
+            question: string;
+            /** Conversation Id */
+            conversation_id?: string | null;
+        };
+        /**
+         * AskResponse
+         * @description Genie's answer: its words, and the table behind them.
+         */
+        AskResponse: {
+            /** Conversation Id */
+            conversation_id: string;
+            /** Answer */
+            answer?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Sql */
+            sql?: string | null;
+            /**
+             * Columns
+             * @default []
+             */
+            columns: string[];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: (string | null)[][];
+        };
         /** Basket */
         Basket: {
             /** Stores */
@@ -311,6 +403,18 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+            /** Image Url */
+            image_url?: string | null;
+            /** Regular Price */
+            regular_price?: number | null;
+            /** Conditions */
+            conditions?: string | null;
+            /** Flyer Url */
+            flyer_url?: string | null;
+            /** Item Url */
+            item_url?: string | null;
+            /** Store Url */
+            store_url?: string | null;
         };
         /**
          * ExtractedItem
@@ -342,6 +446,120 @@ export interface components {
             bought_at?: string | null;
             /** Total */
             total?: number | null;
+        };
+        /** FlyerBrowsePage */
+        FlyerBrowsePage: {
+            /** Items */
+            items: components["schemas"]["FlyerGroup"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total */
+            total: number;
+            /** Stores */
+            stores: string[];
+            /**
+             * Categories
+             * @default []
+             */
+            categories: string[];
+            /**
+             * Ready
+             * @default true
+             */
+            ready: boolean;
+        };
+        /**
+         * FlyerGroup
+         * @description One product across this week's flyers, for the Flyers tab: brand/item/variant/size like a UserItem, plus
+         *     its cheapest listing (tapping the row opens that store's page at that listing's tile).
+         */
+        FlyerGroup: {
+            /** Brand */
+            brand?: string | null;
+            /** Item */
+            item: string;
+            /** Variant */
+            variant?: string | null;
+            /** Size Qty */
+            size_qty?: number | null;
+            /** Size Unit */
+            size_unit?: string | null;
+            cheapest: components["schemas"]["FlyerListing"];
+            /** Store Count */
+            store_count: number;
+            /** Saves Vs Next */
+            saves_vs_next?: number | null;
+            /** Category */
+            category?: string | null;
+        };
+        /**
+         * FlyerListing
+         * @description One store's listing, with enough to open its exact tile.
+         */
+        FlyerListing: {
+            /** Label */
+            label: string;
+            /** Store */
+            store: string;
+            /** Price */
+            price?: number | null;
+            /** Unit Price */
+            unit_price?: number | null;
+            /** Unit */
+            unit?: string | null;
+            /** Flyer Item Id */
+            flyer_item_id: string;
+            /** Page Id */
+            page_id: string;
+            /** Page No */
+            page_no?: number | null;
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Image Url */
+            image_url?: string | null;
+            /** Regular Price */
+            regular_price?: number | null;
+            /** Conditions */
+            conditions?: string | null;
+            /** Flyer Url */
+            flyer_url?: string | null;
+            /** Item Url */
+            item_url?: string | null;
+            /** Store Url */
+            store_url?: string | null;
+        };
+        /** FlyersStatus */
+        FlyersStatus: {
+            /** Postal */
+            postal: string;
+            /** Ready */
+            ready: boolean;
+            /** Refreshing */
+            refreshing: boolean;
+            /** Listings */
+            listings: number;
+            /** Stores */
+            stores: string[];
+            /** Fetched At */
+            fetched_at?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "flipp" | "databricks" | "canned";
+            /** Error */
+            error?: string | null;
+            /**
+             * Ask Enabled
+             * @default false
+             */
+            ask_enabled: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -376,6 +594,8 @@ export interface components {
             size_unit?: string | null;
             /** In Basket */
             in_basket?: boolean | null;
+            /** Done */
+            done?: boolean | null;
         };
         /**
          * ListItem
@@ -403,7 +623,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "receipt" | "photo" | "manual" | "voice";
+            source: "receipt" | "photo" | "manual" | "voice" | "flyer";
             /**
              * Added At
              * Format: date-time
@@ -416,7 +636,19 @@ export interface components {
              * @default false
              */
             in_basket: boolean;
+            /**
+             * Done
+             * @default false
+             */
+            done: boolean;
             cheapest?: components["schemas"]["Deal"] | null;
+            /** Saves Vs Next */
+            saves_vs_next?: number | null;
+            /**
+             * Closest
+             * @default []
+             */
+            closest: components["schemas"]["FlyerListing"][];
             /**
              * Missing
              * @default []
@@ -449,6 +681,15 @@ export interface components {
             aspect?: number | null;
             /** Tiles */
             tiles: components["schemas"]["Tile"][];
+            /**
+             * Page Count
+             * @default 1
+             */
+            page_count: number;
+            /** Prev Page Id */
+            prev_page_id?: string | null;
+            /** Next Page Id */
+            next_page_id?: string | null;
         };
         /** SaveItems */
         SaveItems: {
@@ -458,7 +699,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "receipt" | "photo" | "manual" | "voice";
+            source: "receipt" | "photo" | "manual" | "voice" | "flyer";
             /** Bought At */
             bought_at?: string | null;
         };
@@ -696,6 +937,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -728,6 +971,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -796,6 +1041,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path: {
                 user_item_id: string;
@@ -834,6 +1081,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path: {
                 user_item_id: string;
@@ -872,6 +1121,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -904,6 +1155,8 @@ export interface operations {
             header: {
                 /** @description UUID generated on the device */
                 "X-User-Id": string;
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -917,6 +1170,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Basket"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    flyers_status_flyers_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlyersStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_genie_ask_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browse_flyer_items_flyer_items_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                store?: string | null;
+                sort?: "savings" | "price" | "ends" | "az" | "relevance";
+                page?: number;
+                page_size?: number;
+                category?: string | null;
+            };
+            header?: {
+                /** @description Where to look for flyers, e.g. V6T 1Z4 */
+                "x-postal-code"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlyerBrowsePage"];
                 };
             };
             /** @description Validation Error */
