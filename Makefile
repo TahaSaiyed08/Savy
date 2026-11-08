@@ -19,6 +19,7 @@ tunnel:           ## HTTPS URL for your phone (run alongside make dev; needs: br
 
 test:
 	uv run pytest -q
+	npm --prefix apps/web run test
 
 lint:
 	uv run ruff check .
