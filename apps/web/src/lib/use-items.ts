@@ -4,7 +4,7 @@ import { api, withUser, type Schemas } from "@/lib/api";
 
 /** Pantry state + mutations, shared by the list page and every intake sheet that saves into it. */
 export function useItems() {
-  const [items, setItems] = useState<Schemas["UserItem"][] | undefined>();
+  const [items, setItems] = useState<Schemas["ListItem"][] | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [deleteError, setDeleteError] = useState<string | undefined>();
@@ -72,7 +72,7 @@ export function useItems() {
   );
 
   /** Edits a Pantry item's identity. Throws on failure so the edit sheet can stay open and offer a retry. */
-  const updateItem = useCallback(async (userItemId: string, fields: Schemas["ExtractedItem"]) => {
+  const updateItem = useCallback(async (userItemId: string, fields: Schemas["ItemPatch"]) => {
     const { data, error } = await api.PATCH("/items/{user_item_id}", {
       params: { header: withUser().header, path: { user_item_id: userItemId } },
       body: fields,

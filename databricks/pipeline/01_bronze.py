@@ -24,3 +24,19 @@ def flyer_pages():
             "content",
         )
     )
+
+
+FLIPP = ("flipp_id STRING, store STRING, week_start DATE, valid_from DATE, valid_to DATE, page_id STRING, "
+         "page_no INT, page_aspect DOUBLE, bbox ARRAY<DOUBLE>, image_url STRING, price DOUBLE, raw_text STRING")
+
+
+@dp.table(name="flipp_items", comment="Bronze: one row per Flipp flyer item, written by databricks/fetchers/flipp.py")
+@dp.expect_or_drop("has_text", "raw_text IS NOT NULL AND week_start IS NOT NULL")
+def flipp_items():
+    return (
+        spark.readStream.format("cloudFiles")  # noqa: F821
+        .option("cloudFiles.format", "json")
+        .option("pathGlobFilter", "*.jsonl")
+        .schema(FLIPP)
+        .load(VOLUME)
+    )

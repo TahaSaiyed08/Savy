@@ -6,7 +6,7 @@ bundle:
 variables:
   model:
     description: Vision model endpoint for ai_query (11:00 go/no-go picks this)
-    default: system.ai.llama-4-maverick
+    default: databricks-llama-4-maverick  # serving endpoint name; gemma-3-12b hallucinated items on page 1
 
 sync:
   exclude:

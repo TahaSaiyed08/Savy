@@ -11,7 +11,7 @@ export function EditItemSheet({
   onClose,
   onSave,
 }: {
-  item: Schemas["UserItem"] | null;
+  item: Schemas["ListItem"] | null;
   onClose: () => void;
   onSave: (item: Schemas["ExtractedItem"]) => Promise<void>;
 }) {

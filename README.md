@@ -75,7 +75,7 @@ Done, on [`ws3/polish`](https://github.com/krish-arora-88/SurRealDeal/pull/3) (o
   (`src/components/list/{AddMethodsSheet,ReceiptConfirmSheet,PickProductSheet,TypeOrSaySheet}.tsx`)
 - Confirm screens flag low-confidence rows (`confidence < 0.6`) for edit before `POST /items`; product photo
   shows a chip picker over the extractor's candidates
-- Deals ("exact" vs "probable match" from `match_score`) and Basket (cheapest store, split-shop, dollar delta,
+- Deals (exact matches only: brand, item, variant and size) and Basket (cheapest store, split-shop, dollar delta,
   "no deal this week") tabs
 - Client-side image downscale (≤2000px, JPEG q0.8) before every upload; avoids the API's 413 and normalizes
   iPhone HEIC
@@ -94,7 +94,7 @@ Done, on [`ws3/polish`](https://github.com/krish-arora-88/SurRealDeal/pull/3) (o
 apps/api/        FastAPI: routes (main.py), models mirroring the tables, extractors, SQL client, STT proxy
 apps/web/        Next.js 15 PWA: 3 tabs, HIG tokens (src/app/globals.css), typed client (src/lib/)
 shared/          normalize_unit + tests, versioned prompts (flyer_page, receipt, product, manual)
-databricks/      sql/ (DDL, views), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (one per store), setup/
+databricks/      sql/ (DDL), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (Flipp, all 5 stores), setup/
 databricks.yml   Asset bundle for the pipeline
 .mcp.json        Databricks docs MCP (devhub-docs) for Claude Code
 ```

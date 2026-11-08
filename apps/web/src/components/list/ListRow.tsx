@@ -18,7 +18,7 @@ export function ListRow({
   onEdit,
   onDelete,
 }: {
-  item: Schemas["UserItem"];
+  item: Schemas["ListItem"];
   /** Plain tap on the (unswiped) row. Pantry uses this to open the item's cheapest deal. */
   onTap?: () => void;
   /** Omit to hide the Basket action entirely (e.g. inside the Basket page itself). */

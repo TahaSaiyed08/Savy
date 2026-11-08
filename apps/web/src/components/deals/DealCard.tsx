@@ -57,7 +57,6 @@ export function DealCard({
           </p>
         )}
         <p className="truncate text-[11px] text-label-2">{deal.flyer_label}</p>
-        {deal.match_score < 1 && <p className="truncate text-[11px] text-label-2">Probable match</p>}
         {badge && (
 <<<<<<< HEAD
           <div className="flex items-center gap-1 rounded-lg border border-savings-border bg-savings-bg px-1.5 py-1">

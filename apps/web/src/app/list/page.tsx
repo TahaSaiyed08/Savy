@@ -56,29 +56,28 @@ export default function MyList() {
 =======
 export default function Pantry() {
   const { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch } = useItems();
-  // Loaded once so tapping a Pantry row can jump straight to that item's cheapest flyer match, without a
-  // network round trip per tap.
+  // The other stores' listings for the deal sheet; the tapped item's own cheapest comes with GET /items.
   const { data: deals } = useApi(() => api.GET("/deals", { params: withUser() }));
 >>>>>>> origin/main
   const [flow, setFlow] = useState<Flow>({ step: "closed" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | undefined>();
   const [activeDeal, setActiveDeal] = useState<Schemas["Deal"] | null>(null);
-  const [editingItem, setEditingItem] = useState<Schemas["UserItem"] | null>(null);
+  const [editingItem, setEditingItem] = useState<Schemas["ListItem"] | null>(null);
   const receiptInput = useRef<HTMLInputElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | undefined>(undefined);
   const controllerRef = useRef<ReturnType<typeof intakeController> | null>(null);
   const pendingSaveRef = useRef<PendingSave | null>(null);
 
-  function openCheapestDeal(item: Schemas["UserItem"]) {
-    const matches = (deals ?? [])
-      .filter((d) => d.user_item_id === item.user_item_id)
-      .sort((a, b) => (a.unit_price ?? a.price ?? Infinity) - (b.unit_price ?? b.price ?? Infinity));
-    if (matches[0]) setActiveDeal(matches[0]);
+  // item.cheapest is ranked by the API on cost for the user's size, and comes back fresh after every edit.
+  function openCheapestDeal(item: Schemas["ListItem"]) {
+    if (item.cheapest) setActiveDeal(item.cheapest);
   }
   const otherStoresForActiveDeal = activeDeal
-    ? (deals ?? []).filter((d) => d.item_label === activeDeal.item_label && d.flyer_item_id !== activeDeal.flyer_item_id)
+    ? (deals ?? []).filter(
+        (d) => d.user_item_id === activeDeal.user_item_id && d.flyer_item_id !== activeDeal.flyer_item_id,
+      )
     : [];
 
   function releasePreview() {

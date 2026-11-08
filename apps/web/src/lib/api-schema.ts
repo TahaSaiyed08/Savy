@@ -96,12 +96,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Items */
+        /**
+         * Get Items
+         * @description My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}.
+         */
         get: operations["get_items_items_get"];
         put?: never;
         /**
          * Save Items
-         * @description Saves confirmed intake results.
+         * @description Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing).
          */
         post: operations["save_items_items_post"];
         delete?: never;
@@ -125,10 +128,11 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Edit Item
-         * @description Edits a Pantry item's identity (brand/item/variant/size).
+         * Update Item
+         * @description Edit an item (brand/item/variant/size_qty/size_unit; unknown fields such as price are ignored), or move it to
+         *     or from the Basket with in_basket. Only the fields sent are changed.
          */
-        patch: operations["edit_item_items__user_item_id__patch"];
+        patch: operations["update_item_items__user_item_id__patch"];
         trace?: never;
     };
     "/items/{user_item_id}/basket": {
@@ -142,7 +146,7 @@ export interface paths {
         put?: never;
         /**
          * Set Item Basket
-         * @description Moves an item into (or out of) the Basket -- the subset of the Pantry you're getting right now.
+         * @description Moves a My List item into (or out of) the Basket. Same as PATCH with only in_basket.
          */
         post: operations["set_item_basket_items__user_item_id__basket_post"];
         delete?: never;
@@ -158,7 +162,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Deals */
+        /**
+         * Get Deals
+         * @description Every store's cheapest exact listing for every item on My List.
+         */
         get: operations["get_deals_deals_get"];
         put?: never;
         post?: never;
@@ -177,9 +184,49 @@ export interface paths {
         };
         /**
          * Get Basket
-         * @description The store/split-shop comparison, scoped to only the items moved into the Basket.
+         * @description Store comparison for the Basket (items with in_basket) only.
          */
         get: operations["get_basket_basket_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flyer-pages/{page_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Page
+         * @description The flyer page a listing is on, with every tile's box, for the price-match screen.
+         */
+        get: operations["get_page_flyer_pages__page_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flyer-pages/{page_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Page Image
+         * @description The page JPEG/PNG from the flyers Volume (only pages that came from page images, not Flipp).
+         */
+        get: operations["get_page_image_flyer_pages__page_id__image_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -222,7 +269,10 @@ export interface components {
             /** File */
             file: string;
         };
-        /** Deal */
+        /**
+         * Deal
+         * @description One flyer listing that is exactly the user's item (logic.same_item), with where to find it in the flyer.
+         */
         Deal: {
             /**
              * User Id
@@ -239,8 +289,6 @@ export interface components {
             price?: number | null;
             /** Unit Price */
             unit_price?: number | null;
-            /** Match Score */
-            match_score: number;
             /** Savings Vs Median */
             savings_vs_median?: number | null;
             /** Item Label */
@@ -251,6 +299,18 @@ export interface components {
             unit?: string | null;
             /** Week Start */
             week_start?: string | null;
+            /** Cost */
+            cost: number;
+            /** Page Id */
+            page_id: string;
+            /** Page No */
+            page_no?: number | null;
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
         };
         /**
          * ExtractedItem
@@ -299,10 +359,96 @@ export interface components {
             /** Transcript */
             transcript?: string | null;
         };
+        /**
+         * ItemPatch
+         * @description Edit a list item or move it to/from the basket. Only the fields sent are changed; unknown fields are ignored.
+         */
+        ItemPatch: {
+            /** Brand */
+            brand?: string | null;
+            /** Item */
+            item?: string;
+            /** Variant */
+            variant?: string | null;
+            /** Size Qty */
+            size_qty?: number | null;
+            /** Size Unit */
+            size_unit?: string | null;
+            /** In Basket */
+            in_basket?: boolean | null;
+        };
+        /**
+         * ListItem
+         * @description A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item.
+         */
+        ListItem: {
+            /** User Item Id */
+            user_item_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Brand */
+            brand?: string | null;
+            /** Item */
+            item: string;
+            /** Variant */
+            variant?: string | null;
+            /** Size Qty */
+            size_qty?: number | null;
+            /** Size Unit */
+            size_unit?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "receipt" | "photo" | "manual" | "voice";
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+            /** Last Bought At */
+            last_bought_at?: string | null;
+            /**
+             * In Basket
+             * @default false
+             */
+            in_basket: boolean;
+            cheapest?: components["schemas"]["Deal"] | null;
+            /**
+             * Missing
+             * @default []
+             */
+            missing: ("brand" | "item" | "variant" | "size")[];
+        };
         /** ManualIntake */
         ManualIntake: {
             /** Text */
             text: string;
+        };
+        /**
+         * PageView
+         * @description One flyer page for the price-match screen: highlight the tile whose item_id is the listing's flyer_item_id.
+         */
+        PageView: {
+            /** Page Id */
+            page_id: string;
+            /** Store */
+            store: string;
+            /** Page No */
+            page_no?: number | null;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Image Url */
+            image_url?: string | null;
+            /** Aspect */
+            aspect?: number | null;
+            /** Tiles */
+            tiles: components["schemas"]["Tile"][];
         };
         /** SaveItems */
         SaveItems: {
@@ -343,42 +489,18 @@ export interface components {
             /** Missing */
             missing: number;
         };
-        /** UserItem */
-        UserItem: {
-            /** User Item Id */
-            user_item_id: string;
-            /**
-             * User Id
-             * Format: uuid
-             */
-            user_id: string;
-            /** Brand */
-            brand?: string | null;
-            /** Item */
-            item: string;
-            /** Variant */
-            variant?: string | null;
-            /** Size Qty */
-            size_qty?: number | null;
-            /** Size Unit */
-            size_unit?: string | null;
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "receipt" | "photo" | "manual" | "voice";
-            /**
-             * Added At
-             * Format: date-time
-             */
-            added_at: string;
-            /** Last Bought At */
-            last_bought_at?: string | null;
-            /**
-             * In Basket
-             * @default false
-             */
-            in_basket: boolean;
+        /** Tile */
+        Tile: {
+            /** Item Id */
+            item_id: string;
+            /** Bbox */
+            bbox: number[];
+            /** Image Url */
+            image_url?: string | null;
+            /** Label */
+            label: string;
+            /** Price */
+            price?: number | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -586,7 +708,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserItem"][];
+                    "application/json": components["schemas"]["ListItem"][];
                 };
             };
             /** @description Validation Error */
@@ -622,7 +744,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserItem"][];
+                    "application/json": components["schemas"]["ListItem"][];
                 };
             };
             /** @description Validation Error */
@@ -668,7 +790,7 @@ export interface operations {
             };
         };
     };
-    edit_item_items__user_item_id__patch: {
+    update_item_items__user_item_id__patch: {
         parameters: {
             query?: never;
             header: {
@@ -682,7 +804,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ExtractedItem"];
+                "application/json": components["schemas"]["ItemPatch"];
             };
         };
         responses: {
@@ -692,7 +814,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserItem"];
+                    "application/json": components["schemas"]["ListItem"];
                 };
             };
             /** @description Validation Error */
@@ -730,7 +852,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserItem"];
+                    "application/json": components["schemas"]["ListItem"];
                 };
             };
             /** @description Validation Error */
@@ -795,6 +917,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Basket"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_page_flyer_pages__page_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_page_image_flyer_pages__page_id__image_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                    "image/png": unknown;
                 };
             };
             /** @description Validation Error */
