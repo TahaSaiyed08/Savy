@@ -1,9 +1,21 @@
-"""This week's fake flyers. Shapes match realdeal.core.flyer_items so mock and real modes are interchangeable."""
+"""This week's fake flyers. Shapes match realdeal.core.flyer_items so mock and real modes are interchangeable.
+
+FLYER_ITEMS loads apps/api/data/flipp_snapshot.json if it exists (made by `make flipp-snapshot`: real prices
+from Flipp's public flyer API, see shared/flipp.py) and falls back to the small canned list below otherwise.
+Mock mode never calls the network itself at request time -- the snapshot is a point-in-time file a human
+refreshes by running the snapshot script, same spirit as the --from-dir screenshot fallback for fetchers.
+"""
+import json
+import logging
 from datetime import date
+from pathlib import Path
 
 from apps.api.models import FlyerItem
 from shared.stores import STORES as _NAMES
 from shared.units import normalize_unit, unit_price
+
+log = logging.getLogger(__name__)
+_SNAPSHOT = Path(__file__).parent / "data" / "flipp_snapshot.json"
 
 WEEK = date(2026, 11, 5)
 STORES = list(_NAMES.values())
@@ -40,7 +52,17 @@ def _item(i: int, store, brand, item, variant, size_text, price) -> FlyerItem:
     )
 
 
-FLYER_ITEMS = [_item(i, *row) for i, row in enumerate(_ROWS)]
+def _load_flyer_items() -> list[FlyerItem]:
+    if _SNAPSHOT.exists():
+        try:
+            data = json.loads(_SNAPSHOT.read_text())
+            return [FlyerItem(**row) for row in data["rows"]]
+        except Exception:
+            log.warning("couldn't load %s; falling back to canned flyer data", _SNAPSHOT, exc_info=True)
+    return [_item(i, *row) for i, row in enumerate(_ROWS)]
+
+
+FLYER_ITEMS = _load_flyer_items()
 
 # Every new device starts with these so the Deals and Basket tabs are never empty in a demo.
 SEED_ITEMS = [

@@ -47,6 +47,7 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
 
 def _match_and_store(items: list[UserItem]) -> None:
     """Top-3 per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
+    Items that still have nothing after both try a live Flipp search (_flipp_fallback) before giving up.
 
     Matches land in user_item_matches, which my_deals reads.
     """
@@ -62,6 +63,10 @@ def _match_and_store(items: list[UserItem]) -> None:
         for u in items for item_id, brand, score in found.get(u.user_item_id) or []
         if float(score) >= logic.MATCH_THRESHOLD and not (u.brand and (brand or "").lower() != u.brand.lower())
     ]
+    matched_ids = {m["user_item_id"] for m in matches}
+    still_nothing = [u for u in items if u.user_item_id not in matched_ids]
+    if still_nothing:
+        matches.extend(_flipp_fallback(still_nothing))
     if matches:
         db.execute(  # idempotent, so a retry after a partial or timed-out attempt can't duplicate rows
             "INSERT INTO user_item_matches SELECT s.user_item_id, s.flyer_item_id, s.match_score, current_timestamp() "
@@ -129,6 +134,77 @@ def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
     out: dict[str, list[tuple]] = {u.user_item_id: [] for u in items}
     for x in rows:
         out[x["user_item_id"]].append((x["item_id"], x["brand"], 0.75))
+    return out
+
+
+# Flipp search results per query text, cached for an hour: a live call on the request path is only ever
+# reached for items AI Search *and* the LIKE fallback both missed, but still shouldn't hit the network on
+# every single request for the same unmatched item.
+FLIPP_SEARCH_CACHE_TTL = 3600.0
+_flipp_cache: dict[str, tuple[float, list[dict]]] = {}
+_flipp_cache_lock = threading.Lock()
+
+
+def _cached_flipp_search(query_text: str) -> list[dict]:
+    from shared import flipp
+
+    now = time.monotonic()
+    with _flipp_cache_lock:
+        cached = _flipp_cache.get(query_text)
+    if cached and now - cached[0] < FLIPP_SEARCH_CACHE_TTL:
+        return cached[1]
+    results = flipp.search(query_text)
+    with _flipp_cache_lock:
+        _flipp_cache[query_text] = (now, results)
+    return results
+
+
+def _flipp_fallback(items: list[UserItem]) -> list[dict]:
+    """Last resort when AI Search and the LIKE fallback both come up empty for an item: a live (cached)
+    Flipp search, scored with logic.match_score at the usual threshold, top-3 like the other two paths.
+
+    Flipp's search isn't scoped to our five stores and has no stable flyer_items row of its own, so any
+    result that clears the threshold gets written into flyer_items first (idempotent on item_id, same
+    "flipp-<id>" scheme the fetchers use) so my_deals' join resolves it like any other match. See
+    databricks/setup/load_flipp_items.py's docstring for the caveat about writing into a Lakeflow-managed
+    streaming table.
+    """
+    from apps.api import databricks_sql as db
+    from shared import flipp
+
+    out: list[dict] = []
+    new_rows: list[dict] = []
+    for u in items:
+        try:
+            results = _cached_flipp_search(logic.label(u))
+        except Exception:
+            log.warning("Flipp live search failed for %r", logic.label(u), exc_info=True)
+            continue
+        scored: list[tuple[float, object]] = []
+        for it in results:
+            extracted = flipp.to_extracted_item(it)
+            if extracted is None:
+                continue
+            fi = flipp.flyer_item_from(
+                extracted, item_id=f"flipp-live-{it['id']}", page_id=f"flipp-live:{it.get('flyer_id', '?')}",
+                store=it.get("merchant_name") or it.get("merchant") or "unknown", week_start=date.today(),
+                raw_text=it.get("name", ""),
+            )
+            score = logic.match_score(u, fi)
+            if score >= logic.MATCH_THRESHOLD:
+                scored.append((score, fi))
+        scored.sort(key=lambda t: -t[0])
+        for score, fi in scored[:3]:
+            out.append({"user_item_id": u.user_item_id, "flyer_item_id": fi.item_id, "match_score": score})
+            new_rows.append(flipp.flyer_items_table_row(fi))
+    if new_rows:
+        cols = ", ".join(flipp.FLYER_ITEM_COLUMNS)
+        db.execute(
+            f"INSERT INTO flyer_items ({cols}) SELECT {cols} FROM "
+            f"(SELECT inline(from_json(:rows, '{flipp.FLYER_ITEM_ROWS_SQL_TYPE}'))) s "
+            "WHERE NOT EXISTS (SELECT 1 FROM flyer_items f WHERE f.item_id = s.item_id)",
+            rows=json.dumps(new_rows),
+        )
     return out
 
 

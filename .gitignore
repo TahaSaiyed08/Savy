@@ -20,3 +20,8 @@ flyer-shots/
 
 # Real receipt photos for testing the extractor (personal data, never committed)
 receipt-shots/
+
+# make flipp-snapshot output: real current prices for richer manual/demo testing. Never committed — once
+# present it replaces mock_data.py's canned FLYER_ITEMS, which several existing unit tests assert specific
+# values against (test_api.py: brand rule, unit-price scaling, basket totals). Regenerate locally as needed.
+apps/api/data/flipp_snapshot.json

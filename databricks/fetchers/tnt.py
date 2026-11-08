@@ -1,17 +1,22 @@
-"""T&T weekly flyer -> UC Volume.
+"""T&T weekly flyer -> UC Volume, via Flipp's public flyer API (shared/flipp.py).
 
 Usage: uv run python databricks/fetchers/tnt.py [--from-dir DIR]
 """
-from common import run
+import sys
+
+from common import FetchResult, run
+
+from shared import flipp
 
 STORE = "tnt"
-# Unverified starting point; most chains serve pages through a flyer CDN (check DevTools).
-START_HERE = "https://www.tntsupermarket.com/"
+MERCHANT = "T&T Supermarket"  # exact Flipp merchant name
 
 
-def fetch() -> list[bytes]:
-    """Return this week's flyer pages as JPEG/PNG bytes, in page order, for a Vancouver (V6T) store."""
-    raise NotImplementedError(f"TODO(workstream 1): scrape {START_HERE}, or run with --from-dir")
+def fetch() -> FetchResult:
+    r = flipp.fetch_grocery_flyer(MERCHANT, STORE)
+    print(f"{STORE}: {len(r['rows'])}/{r['item_count']} items had a price, "
+          f"{r['sized_count']} of those had a parseable size", file=sys.stderr)
+    return FetchResult(pages=r["pages"], week=r["week"], items=r["rows"])
 
 
 if __name__ == "__main__":
