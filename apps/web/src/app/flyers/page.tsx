@@ -7,6 +7,7 @@ import { Check, CirclePlus, Clock, MapPin, Tag } from "@/components/icons";
 import { AskButton, AskSheet } from "@/components/AskSheet";
 import { LocationSheet } from "@/components/LocationSheet";
 import { PriceTag } from "@/components/PriceTag";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Thumb } from "@/components/Thumb";
 import { useToast } from "@/components/Toast";
 import { Chip, EmptyState, LargeTitle, ListSkeleton, RetryButton, SearchField, SkeletonRow, Status, money } from "@/components/ui";
@@ -170,6 +171,7 @@ export default function Flyers() {
     <>
       <LargeTitle
         title="Flyers"
+        leading={<ThemeToggle />}
         action={
           <div className="flex items-center gap-2">
             {place?.ask_enabled && <AskButton onClick={() => setAsking(true)} />}

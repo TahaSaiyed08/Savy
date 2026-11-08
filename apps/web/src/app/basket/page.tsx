@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BasketRow } from "@/components/basket/BasketRow";
 import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
 import { ChevronRight, CircleCheck, ShoppingCart } from "@/components/icons";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/Toast";
 import { EmptyState, InsetGroup, LargeTitle, ListSkeleton, RetryButton, Status, money } from "@/components/ui";
 import { useItems } from "@/lib/use-items";
@@ -58,6 +59,7 @@ export default function Basket() {
     <>
       <LargeTitle
         title="Basket"
+        leading={<ThemeToggle />}
         action={
           done.length > 0 ? (
             <button type="button" onClick={clearDone} className="min-h-tap text-[17px] text-tint">
