@@ -1,15 +1,21 @@
 import io
 import uuid
+from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from apps.api import logic
-from apps.api.extractors import sniff_media_type
+from apps.api.extractors import ClaudeExtractor, sniff_media_type
 from apps.api.main import app
 from apps.api.mock_data import FLYER_ITEMS
+from apps.api.models import Extraction
 
 c = TestClient(app)
 H = {"X-User-Id": str(uuid.uuid4())}
+PNG = b"\x89PNG\r\n\x1a\nrest"
+HEIC = b"\0\0\0\x18ftypheic\0\0\0\0"
 
 
 def test_requires_user_id():
@@ -37,10 +43,36 @@ def test_rejects_non_image_receipt():
 
 
 def test_media_type_comes_from_bytes_not_the_label():
-    assert sniff_media_type(b"\xff\xd8\xff\xe0rest", "image/png") == "image/jpeg"
-    assert sniff_media_type(b"\x89PNG\r\n\x1a\nrest", "image/jpeg") == "image/png"
-    assert sniff_media_type(b"RIFF\0\0\0\0WEBPrest", "image/jpeg") == "image/webp"
-    assert sniff_media_type(b"unknown", "image/heic") == "image/heic"
+    assert sniff_media_type(b"\xff\xd8\xff\xe0rest") == "image/jpeg"
+    assert sniff_media_type(b"\x89PNG\r\n\x1a\nrest") == "image/png"
+    assert sniff_media_type(b"GIF89a") == "image/gif"
+    assert sniff_media_type(b"RIFF\0\0\0\0WEBPrest") == "image/webp"
+    assert sniff_media_type(b"RIFF\0\0\0\0WAVErest") is None
+    assert sniff_media_type(b"") is None
+    assert sniff_media_type(HEIC) is None
+
+
+def _claude_with_fake_client():
+    calls = []
+    ext = ClaudeExtractor.__new__(ClaudeExtractor)
+    ext.model = "test-model"
+    ext.client = SimpleNamespace(messages=SimpleNamespace(parse=lambda **kw: calls.append(kw) or SimpleNamespace(
+        stop_reason="end_turn", parsed_output=Extraction(items=[]))))
+    return ext, calls
+
+
+def test_claude_sends_the_sniffed_media_type():
+    ext, calls = _claude_with_fake_client()
+    ext.extract("receipt", image=PNG, media_type="image/jpeg")
+    image_block = calls[0]["messages"][0]["content"][0]
+    assert image_block["source"]["media_type"] == "image/png"
+
+
+def test_heic_is_rejected_before_any_paid_call():
+    ext, calls = _claude_with_fake_client()
+    with pytest.raises(HTTPException) as e:
+        ext.extract("receipt", image=HEIC, media_type="image/heic")
+    assert e.value.status_code == 415 and not calls
 
 
 def test_voice_uses_mock_transcript():

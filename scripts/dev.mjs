@@ -3,12 +3,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 if (!existsSync(resolve("apps/web/node_modules/next"))) {
-  console.error("Web dependencies are missing. Run `dev.cmd setup` before `dev.cmd dev`.");
+  console.error("Web dependencies are missing. Run setup (`make setup`, or `dev.cmd setup` on Windows).");
   process.exit(1);
 }
 
 if (!existsSync(resolve(".env"))) {
-  console.error(".env is missing. Run `dev.cmd setup` before `dev.cmd dev`.");
+  console.error(".env is missing. Run setup (`make setup`, or `dev.cmd setup` on Windows).");
   process.exit(1);
 }
 
@@ -74,6 +74,7 @@ function start(name, command, args) {
 
 process.on("SIGINT", () => stop(0));
 process.on("SIGTERM", () => stop(0));
+process.on("SIGHUP", () => stop(0));
 
 start("API", "uv", [
   "run", "--env-file", ".env", "uvicorn", "apps.api.main:app",

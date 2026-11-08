@@ -3,6 +3,8 @@ import base64
 import os
 from typing import Protocol
 
+from fastapi import HTTPException
+
 from apps.api.models import ExtractedItem, Extraction, Mode
 from shared import load_prompt
 from shared.units import normalize_unit
@@ -17,11 +19,11 @@ class Extractor(Protocol):
 _MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"))
 
 
-def sniff_media_type(image: bytes, declared: str) -> str:
-    """Media type from the file's bytes. Browsers and renamed files mislabel uploads, and Claude rejects mismatches."""
+def sniff_media_type(image: bytes) -> str | None:
+    """Real type from magic bytes (JPEG/PNG/GIF/WebP), otherwise None. Uploads are often mislabeled."""
     if image[:4] == b"RIFF" and image[8:12] == b"WEBP":
         return "image/webp"
-    return next((t for magic, t in _MAGIC if image.startswith(magic)), declared)
+    return next((t for magic, t in _MAGIC if image.startswith(magic)), None)
 
 
 class ClaudeExtractor:
@@ -36,8 +38,11 @@ class ClaudeExtractor:
     def extract(self, mode, *, image=None, media_type="image/jpeg", text=None):
         content: list[dict] = []
         if image:
+            media_type = sniff_media_type(image)
+            if media_type is None:
+                raise HTTPException(415, "Unsupported image format; use JPEG, PNG, GIF or WebP "
+                                         "(iPhone: Settings > Camera > Formats > Most Compatible)")
             data = base64.standard_b64encode(image).decode()
-            media_type = sniff_media_type(image, media_type)
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
         content.append({"type": "text", "text": text or "Extract the items."})
         r = self.client.messages.parse(

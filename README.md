@@ -8,7 +8,7 @@ receipts), with the cheapest store for the whole basket. Mobile-first PWA, HackC
 
 ## Setup (every teammate)
 
-Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, [make](https://gnuwin32.sourceforge.net/packages/make.htm), git.
+Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, make (macOS/Linux; Windows uses dev.cmd), git.
 WS1 also needs the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
 
 ```sh
@@ -24,7 +24,7 @@ On Windows, use the command file instead of `make setup` and `make dev`:
 .\dev.cmd dev    # start both servers; Ctrl-C stops them
 ```
 
-Run setup first to install the local Next.js dependency; if `next` is not recognized, rerun setup.
+`dev.cmd dev` refuses to start until setup has installed apps/web/node_modules and created .env.
 
 Open http://localhost:3000. With an empty `.env` everything runs on **mock data**: a new device gets five seeded
 list items, mock flyers for five stores, canned receipt and voice extraction. API docs: http://localhost:8000/docs.
