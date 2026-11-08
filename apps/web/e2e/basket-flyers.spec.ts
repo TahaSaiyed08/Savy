@@ -93,12 +93,11 @@ test("price match: links out to the original flyer and the store's own page", as
   await page.goto("/flyers");
   await page.locator("li button").first().click();
 
-  const screen = page.getByRole("heading", { name: "Price match" }).locator("../..");
-  const flyer = screen.getByRole("link", { name: /^Open .* flyer for /i });
+  const flyer = page.getByRole("link", { name: /Original flyer/ });
   await expect(flyer).toHaveAttribute("href", "https://flipp.com/en-ca/item/1052141198");
   await expect(flyer).toHaveAttribute("target", "_blank");
   await expect(flyer).toHaveAttribute("rel", /noopener/);
-  await expect(screen.getByRole("link", { name: /View on .*'s site/ })).toHaveAttribute("href", "https://www.nofrills.ca/p/20921434001_EA");
+  await expect(page.getByRole("link", { name: /View on .*'s site/ })).toHaveAttribute("href", "https://www.nofrills.ca/p/20921434001_EA");
 });
 
 test("price match: no original-flyer link when the listing didn't come from Flipp", async ({ page }) => {
@@ -110,25 +109,7 @@ test("price match: no original-flyer link when the listing didn't come from Flip
   await page.goto("/flyers");
   await page.locator("li button").first().click();
   await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Open .* flyer for /i })).toHaveCount(0);
-});
-
-test("flyers: tapping a row's image opens the flyer link; tapping its text opens Price Match", async ({ page, context }) => {
-  await page.route("**/api/flyer-items**", async (route) => {
-    const body = await (await route.fetch()).json();
-    Object.assign(body.items[0].cheapest, { item_url: "https://flipp.com/en-ca/item/1052141198" });
-    await route.fulfill({ json: body });
-  });
-  await page.goto("/flyers");
-
-  const image = page.getByRole("link", { name: /^Open .* flyer for /i }).first();
-  const [popup] = await Promise.all([context.waitForEvent("page"), image.click()]);
-  await expect.poll(() => popup.url()).toBe("https://flipp.com/en-ca/item/1052141198");
-  await popup.close();
-  await expect(page.getByRole("heading", { name: "Price match" })).toHaveCount(0);
-
-  await page.locator("li button").first().click();
-  await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Original flyer/ })).toHaveCount(0);
 });
 
 test("ask: the Ask button only appears when Genie is set up, and shows its answer and table", async ({ page }) => {

@@ -203,9 +203,20 @@ function MatchCard({ listing, saves, closestNote }: { listing: Listing; saves?: 
     <div className="mx-4 mb-2 flex shrink-0 flex-col gap-1.5 rounded-[16px] bg-elevated p-3.5">
       {expired && listing.validTo && <p className="-mx-1 rounded-[8px] bg-destructive px-2 py-1 text-[13px] font-semibold text-white">Expired {shortDate(listing.validTo)}</p>}
       {closestNote && <p className="text-[13px] text-label-2">Closest match, not your exact item</p>}
-      <div className="flex items-center gap-3">
-        <Thumb src={listing.imageUrl} href={original} store={listing.store} item={listing.label} />
-        <p className="min-w-0 flex-1 truncate text-[17px] font-semibold">{listing.store}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="min-w-0 truncate text-[17px] font-semibold">{listing.store}</p>
+        {original && (
+          <a
+            href={original}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-tap shrink-0 items-center gap-1 text-[15px] font-semibold text-tint"
+          >
+            Original flyer
+            <ExternalLink size={15} />
+            <span className="sr-only">(opens Flipp in a new tab)</span>
+          </a>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <PriceTag price={listing.price} regular={listing.regularPrice} large />
@@ -326,9 +337,9 @@ function PriceMatchScreen({ target, onClose }: { target: MatchTarget; onClose: (
                 <h2 className="px-3.5 pb-1.5 text-[13px] uppercase text-label-2">Closest this week</h2>
                 <ul className="overflow-hidden rounded-[14px] bg-elevated">
                   {target.closest.map((l) => (
-                    <li key={l.flyerItemId} className="row-sep relative flex min-h-[3.75rem] items-center gap-3 px-3.5 py-3" style={{ "--sep": "70px" } as React.CSSProperties}>
-                      <Thumb src={l.imageUrl} href={l.itemUrl ?? l.flyerUrl} store={l.store} item={l.label} />
-                      <button type="button" onClick={() => setPicked(l)} className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left">
+                    <li key={l.flyerItemId} className="relative">
+                      <button type="button" onClick={() => setPicked(l)} className="row-sep relative flex min-h-[3.75rem] w-full items-center gap-3 px-3.5 py-3 text-left" style={{ "--sep": "70px" } as React.CSSProperties}>
+                        <Thumb src={l.imageUrl} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">{l.label}</span>
                           <span className="block truncate text-[15px] text-label-2">{l.store}</span>

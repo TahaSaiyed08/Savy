@@ -10,7 +10,6 @@ import { TypeOrSaySheet } from "@/components/list/TypeOrSaySheet";
 import { EditItemSheet } from "@/components/list/EditItemSheet";
 import { ListRow } from "@/components/list/ListRow";
 import { PriceMatch, matchFor, type MatchTarget } from "@/components/deals/PriceMatch";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/Toast";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { downscaleImage } from "@/lib/downscale";
@@ -181,7 +180,6 @@ export default function Pantry() {
     <>
       <LargeTitle
         title="Pantry"
-        leading={<ThemeToggle />}
         action={
           <button
             type="button"
