@@ -1,6 +1,7 @@
 """Databricks SQL Statement Execution API client. Every read has a 5 s timeout and a last-good cache."""
 import logging
 import os
+import time
 from collections import OrderedDict
 from datetime import date, datetime
 from functools import cache
@@ -23,27 +24,55 @@ def _client() -> WorkspaceClient:
     return WorkspaceClient()  # reads DATABRICKS_HOST / DATABRICKS_TOKEN
 
 
-def _run(sql: str, params: dict) -> list[dict]:
-    r = _client().statement_execution.execute_statement(
-        statement=sql,
-        warehouse_id=os.environ["DATABRICKS_WAREHOUSE_ID"],
-        catalog="realdeal",
-        schema="core",
-        parameters=[
-            StatementParameterListItem(
-                name=k, value=None if v is None else str(v), type=_TYPES.get(type(v), "STRING")
-            )
-            for k, v in params.items()
-        ],
-        wait_timeout="5s",
-        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
-    )
+def _params(params: dict) -> list[StatementParameterListItem]:
+    return [StatementParameterListItem(name=k, value=None if v is None else str(v), type=_TYPES.get(type(v), "STRING"))
+            for k, v in params.items()]
+
+
+def _rows(r) -> list[dict]:
     if r.status.state != StatementState.SUCCEEDED:
         raise RuntimeError(f"statement {r.status.state}: {r.status.error}")
     if not r.manifest or not r.manifest.schema.columns:
         return []
     cols = [c.name for c in r.manifest.schema.columns]
     return [dict(zip(cols, row, strict=True)) for row in (r.result.data_array or [])]
+
+
+def _run(sql: str, params: dict) -> list[dict]:
+    r = _client().statement_execution.execute_statement(
+        statement=sql,
+        warehouse_id=os.environ["DATABRICKS_WAREHOUSE_ID"],
+        catalog="realdeal",
+        schema="core",
+        parameters=_params(params),
+        wait_timeout="5s",
+        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
+    )
+    return _rows(r)
+
+
+def run_long(sql: str, timeout: float = 90.0, **params) -> list[dict]:
+    """For slow statements such as ai_query on an image: polls up to `timeout` seconds, then cancels.
+
+    Never cached, and outside the 5 s budget of query()/execute(), which stays the rule for everything else.
+    """
+    w, deadline = _client(), time.monotonic() + timeout
+    r = w.statement_execution.execute_statement(
+        statement=sql,
+        warehouse_id=os.environ["DATABRICKS_WAREHOUSE_ID"],
+        catalog="realdeal",
+        schema="core",
+        parameters=_params(params),
+        wait_timeout="50s",
+        on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CONTINUE,
+    )
+    while r.status.state in (StatementState.PENDING, StatementState.RUNNING):
+        if time.monotonic() > deadline:
+            w.statement_execution.cancel_execution(r.statement_id)
+            raise TimeoutError(f"statement still running after {timeout:.0f} s; cancelled")
+        time.sleep(1)
+        r = w.statement_execution.get_statement(r.statement_id)
+    return _rows(r)
 
 
 def query(sql: str, fallback: bool = True, **params) -> list[dict]:

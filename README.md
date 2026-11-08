@@ -60,6 +60,9 @@ week's real flyer prices — see "Flyer data: Flipp integration" below).
 | `ELEVENLABS_API_KEY` | API voice proxy | canned transcript |
 
 Overrides: `REALDEAL_MOCK=0|1`, `EXTRACTOR=mock|claude|databricks`, `ANTHROPIC_MODEL`, `API_URL` (web → API proxy target).
+`EXTRACTOR=databricks` extracts with `ai_query` on the SQL warehouse (model: `DATABRICKS_EXTRACT_MODEL`, default
+`databricks-llama-4-maverick`). It's opt-in: on the demo receipt it took ~25 s against Claude's ~12 s and misread
+some abbreviated lines with high confidence, so Claude stays the default.
 Never commit `.env`.
 
 The web app reads its own settings from `apps/web/.env.local` (git-ignored). `DATABRICKS_APP_URL` there switches
