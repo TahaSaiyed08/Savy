@@ -31,14 +31,14 @@ export function DealCard({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl border border-separator bg-elevated text-left shadow-[0_8px_20px_0_rgba(15,23,42,0.04)] dark:shadow-[0_10px_24px_0_rgba(0,0,0,0.25)]"
+      className="flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl border border-separator bg-elevated text-left shadow-card"
     >
-      <div className="relative size-[150px] bg-white">
+      <div className="relative size-[150px] bg-elevated">
         {img ? (
           // eslint-disable-next-line @next/next/no-img-element -- demo product photography shipped as static assets
           <img src={img} alt="" className="size-full object-cover" />
         ) : (
-          <div className="flex size-full items-center justify-center text-[28px] font-semibold text-black/30">{deal.item_label.charAt(0)}</div>
+          <div className="flex size-full items-center justify-center text-[28px] font-semibold text-label-2">{deal.item_label.charAt(0)}</div>
         )}
         <span className="absolute left-1.5 top-1.5 rounded-[5px] bg-white/95 px-1.5 py-1 text-[13px] text-black">{deal.store}</span>
       </div>

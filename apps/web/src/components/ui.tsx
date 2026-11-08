@@ -17,7 +17,7 @@ export function InsetGroup({ header, footer, children }: { header?: string; foot
   return (
     <section className="mx-4 mb-6">
       {header && <h2 className="px-4 pb-1.5 text-[0.8125rem] uppercase text-label-2">{header}</h2>}
-      <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-[0_4px_16px_0_rgba(0,0,0,0.04)] dark:shadow-[0_8px_24px_0_rgba(0,0,0,0.25)]">
+      <ul className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
         {children}
       </ul>
       {footer && <p className="px-4 pt-1.5 text-[0.8125rem] text-label-2">{footer}</p>}
@@ -127,7 +127,7 @@ export function PrimaryButton({
       type={type}
       onClick={onClick}
       disabled={disabled || loading}
-      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-white shadow-[0_8px_18px_0_rgba(36,138,61,0.2)] transition-opacity disabled:opacity-40"
+      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-white shadow-tint transition-opacity disabled:opacity-40"
     >
       {loading && <Loader size={18} />}
       {children}
@@ -150,7 +150,7 @@ export function Chip({
       onClick={onClick}
       aria-pressed={selected}
       className={`flex h-tap shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[15px] transition-colors ${
-        selected ? "bg-tint font-semibold text-white shadow-[0_6px_14px_0_rgba(36,138,61,0.2)]" : "border border-separator bg-elevated text-label"
+        selected ? "bg-tint font-semibold text-white shadow-tint" : "border border-separator bg-elevated text-label"
       }`}
     >
       {label}

@@ -36,7 +36,7 @@ export function draftToItem(d: ItemDraft, confidence = 1): Schemas["ExtractedIte
 
 export function ItemEditor({ draft, onChange }: { draft: ItemDraft; onChange: (d: ItemDraft) => void }) {
   return (
-    <div className="overflow-hidden rounded-[16px] border border-separator bg-elevated shadow-[0_4px_16px_0_rgba(0,0,0,0.04)]">
+    <div className="overflow-hidden rounded-[16px] border border-separator bg-elevated shadow-card">
       <FieldRow label="Brand" value={draft.brand} placeholder="Any brand" onChange={(v) => onChange({ ...draft, brand: v })} />
       <FieldRow label="Item" value={draft.item} onChange={(v) => onChange({ ...draft, item: v })} />
       <FieldRow label="Variant" value={draft.variant} placeholder="—" onChange={(v) => onChange({ ...draft, variant: v })} />

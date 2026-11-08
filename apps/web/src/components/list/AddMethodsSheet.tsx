@@ -22,7 +22,7 @@ export function AddMethodsSheet({
   return (
     <Sheet open={open} onClose={onClose} title="Add to your list" action={<span className="w-[72px]" />}>
       <div className="p-4">
-        <div className="overflow-hidden rounded-[20px] bg-elevated shadow-[0_4px_16px_0_rgba(0,0,0,0.03)]">
+        <div className="overflow-hidden rounded-[20px] bg-elevated shadow-card">
           {OPTIONS.map((o) => (
             <button
               key={o.key}

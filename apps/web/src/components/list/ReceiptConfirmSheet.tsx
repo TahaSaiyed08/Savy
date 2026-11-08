@@ -93,7 +93,7 @@ export function ReceiptConfirmSheet({
               <TriangleAlert size={16} className="text-warning-text" />
               <p className="text-[13px] font-semibold text-warning-text">CHECK THESE</p>
             </div>
-            <div className="overflow-hidden rounded-[16px] border border-warning-border bg-warning-bg shadow-[0_4px_12px_0_rgba(0,0,0,0.03)]">
+            <div className="overflow-hidden rounded-[16px] border border-warning-border bg-warning-bg shadow-card">
               {low.map(({ it, i }) => (
                 <div key={i} className="flex items-center gap-2 border-b border-warning-border px-3.5 py-3 last:border-b-0">
                   <p className="min-w-0 flex-1 truncate text-[17px] font-semibold text-label">{label(it)}</p>
@@ -111,7 +111,7 @@ export function ReceiptConfirmSheet({
             <div className="pt-5 pb-2">
               <p className="text-[13px] font-semibold text-label-2">LOOKS RIGHT</p>
             </div>
-            <div className="overflow-hidden rounded-[16px] border border-separator bg-elevated shadow-[0_4px_12px_0_rgba(0,0,0,0.03)]">
+            <div className="overflow-hidden rounded-[16px] border border-separator bg-elevated shadow-card">
               {ok.map(({ it, i }) => (
                 <button
                   key={i}

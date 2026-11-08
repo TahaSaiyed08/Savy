@@ -41,7 +41,7 @@ export function Sheet({
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
-        className={`absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-xl flex-col overflow-hidden rounded-t-[24px] bg-bg shadow-[0px_-8px_24px_0px_rgba(0,0,0,0.15)] ${
+        className={`absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-xl flex-col overflow-hidden rounded-t-[24px] bg-bg shadow-sheet ${
           tall ? "top-[6vh] max-h-[94vh]" : "max-h-[85vh]"
         }`}
       >

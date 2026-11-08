@@ -145,7 +145,7 @@ export function TypeOrSaySheet({
               placeholder="e.g. a 4 L jug of 2% milk"
               rows={3}
               disabled={step !== "idle"}
-              className="min-h-[108px] w-full resize-none rounded-2xl border border-separator bg-elevated p-4 text-[17px] text-label shadow-[0_2px_10px_0_rgba(0,0,0,0.04)] outline-none placeholder:text-label-2/70"
+              className="min-h-[108px] w-full resize-none rounded-2xl border border-separator bg-elevated p-4 text-[17px] text-label shadow-card outline-none placeholder:text-label-2/70"
             />
 
             <div className="flex flex-col items-center gap-4">
@@ -169,12 +169,12 @@ export function TypeOrSaySheet({
                 onPointerUp={() => step === "recording" && stopRecording()}
                 onPointerCancel={() => step === "recording" && stopRecording()}
                 disabled={step === "transcribing"}
-                className={`flex items-center justify-center rounded-full border shadow-[0_6px_18px_0_rgba(0,0,0,0.07)] transition-all duration-150 ${
+                className={`flex items-center justify-center rounded-full border shadow-soft transition-all duration-150 ${
                   step === "recording" ? "size-[110px] border-2 border-tint/30 bg-savings-bg" : "size-24 border-separator bg-bg"
                 }`}
               >
                 <span
-                  className={`flex items-center justify-center rounded-full bg-tint shadow-[0_8px_20px_0_rgba(36,138,61,0.2)] transition-all duration-150 ${
+                  className={`flex items-center justify-center rounded-full bg-tint shadow-tint transition-all duration-150 ${
                     step === "recording" ? "size-[88px]" : "size-20"
                   }`}
                 >

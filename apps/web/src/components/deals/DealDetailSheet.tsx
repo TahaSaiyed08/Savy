@@ -40,12 +40,12 @@ export function DealDetailSheet({
       action={<span className="w-[72px]" />}
     >
       <div className="flex flex-col gap-4 px-4 pb-8">
-        <div className="relative flex h-[200px] items-center justify-center overflow-hidden rounded-2xl border border-separator bg-white shadow-[0_4px_12px_0_rgba(0,0,0,0.04)]">
+        <div className="relative flex h-[200px] items-center justify-center overflow-hidden rounded-2xl border border-separator bg-elevated shadow-card">
           {img ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={img} alt="" className="size-[200px] object-cover" />
           ) : (
-            <p className="text-[40px] font-semibold text-black/30">{deal.item_label.charAt(0)}</p>
+            <p className="text-[40px] font-semibold text-label-2">{deal.item_label.charAt(0)}</p>
           )}
           <span className="absolute left-3 top-3 rounded-full border border-separator bg-bg px-2.5 py-1 text-[13px]">{deal.store}</span>
         </div>
@@ -71,7 +71,7 @@ export function DealDetailSheet({
         {others.length > 0 && (
           <>
             <p className="pt-3 text-[13px] font-semibold text-label-2">OTHER STORES THIS WEEK</p>
-            <div className="overflow-hidden rounded-2xl border border-separator bg-elevated shadow-[0_4px_12px_0_rgba(0,0,0,0.04)]">
+            <div className="overflow-hidden rounded-2xl border border-separator bg-elevated shadow-card">
               {others.map((o) => (
                 <div key={o.flyer_item_id} className="flex h-[52px] items-center justify-between border-b border-separator px-4 last:border-b-0">
                   <p className="text-[17px]">{o.store}</p>

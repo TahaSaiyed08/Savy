@@ -59,7 +59,7 @@ export function PickProductSheet({
             <img
               src={previewUrl}
               alt=""
-              className="size-[108px] rounded-2xl border border-separator object-cover shadow-[0_6px_16px_0_rgba(0,0,0,0.07)]"
+              className="size-[108px] rounded-2xl border border-separator object-cover shadow-soft"
             />
           ) : (
             <div className="size-[108px] rounded-2xl bg-elevated" />
@@ -75,7 +75,7 @@ export function PickProductSheet({
                 onClick={() => pick(i)}
                 className={`flex min-h-tap items-center gap-2 rounded-full px-3 py-2.5 text-left text-[15px] ${
                   i === pickedIndex
-                    ? "border-[1.5px] border-tint bg-savings-bg font-semibold text-tint shadow-[0_4px_12px_0_rgba(36,138,61,0.08)]"
+                    ? "border-[1.5px] border-tint bg-savings-bg font-semibold text-tint shadow-tint"
                     : "border border-separator bg-elevated"
                 }`}
               >

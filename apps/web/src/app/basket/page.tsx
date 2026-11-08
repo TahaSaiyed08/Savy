@@ -22,7 +22,7 @@ export default function Basket() {
 
       {b?.cheapest_store && cheapest && (
         <>
-          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-[0_6px_18px_0_rgba(0,0,0,0.04)] dark:shadow-[0_8px_24px_0_rgba(0,0,0,0.25)]">
+          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
             <div className="flex items-center justify-between">
               <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Cheapest single store</p>
               <CircleCheck size={20} className="text-tint" />
