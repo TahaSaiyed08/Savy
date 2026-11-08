@@ -1,4 +1,4 @@
-"""The definition of the Real Deal Genie space: which tables it reads and what it knows about them.
+"""The definition of the Savy Genie space: which tables it reads and what it knows about them.
 
 Genie writes SQL from plain-language questions, so what makes its answers good is the table and column comments
 (in apps/api/databricks_sync.py), the instructions below, and a few worked examples.
@@ -6,7 +6,9 @@ Genie writes SQL from plain-language questions, so what makes its answers good i
 import json
 import uuid
 
-TITLE = "Real Deal: this week's grocery deals"
+TITLE = "Savy: this week's grocery deals"
+# The name before the rename: setup still finds a space with it and renames it, rather than making a second one.
+LEGACY_TITLES = ("Real Deal: this week's grocery deals",)
 DESCRIPTION = "Ask about this week's grocery flyer prices near a postal code: cheapest items, stores, discounts."
 # Genie is only allowed to read these two tables (kept in sync by apps/api/databricks_sync.py).
 TABLES = ["realdeal.core.live_listings", "realdeal.core.price_history"]

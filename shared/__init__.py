@@ -4,7 +4,7 @@ from pathlib import Path
 # the Databricks pipeline so both read receipts and photos the same way.
 PROMPTS = Path(__file__).parent / "prompts"
 PROMPT_VERSION = "v1"  # default for modes not in PROMPT_VERSIONS
-PROMPT_VERSIONS = {"receipt": "v2", "manual": "v2"}  # per-mode overrides, so tuning one prompt doesn't touch the others
+PROMPT_VERSIONS = {"receipt": "v3", "manual": "v2"}  # per-mode overrides, so tuning one prompt doesn't touch the others
 
 
 def load_prompt(mode: str, version: str | None = None) -> str:

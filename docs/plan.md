@@ -1,6 +1,6 @@
-# Real Deal: implementation plan
+# Savy: implementation plan
 
-Source of truth: [`docs/superpowers/specs/Real Deal — MVP Design.md`](superpowers/specs/Real%20Deal%20—%20MVP%20Design.md).
+Source of truth: [`docs/superpowers/specs/Savy — MVP Design.md`](superpowers/specs/Savy%20—%20MVP%20Design.md).
 HackCamp 2026, Sat Nov 7 to Sun Nov 8.
 
 The scaffold runs end to end on mock data (`make setup && make dev`). Each workstream swaps one mock for the real

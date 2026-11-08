@@ -1,4 +1,4 @@
-# Real Deal — MVP Design
+# Savy — MVP Design
 
 > **Superseded for matching (PR #12):** matching is now exact (brand, item, variant and size; see
 > `apps/api/logic.py`). AI Search, `flyer_items_idx`, `my_deals`, the 0.75 threshold and "probable match" are gone,
@@ -8,7 +8,7 @@ Nov 7, 2026 · @PSA ClaudeCode2
 
 ## Overview
 
-Real Deal reads every weekly grocery flyer from 4–5 major Vancouver chains, learns what a student actually buys from their receipts, and shows them only the deals on their own items plus the cheapest store for the whole basket. It is a mobile-first PWA for UBC students, built for HackCamp 2026 (Nov 7–8) with Databricks as the main sponsor track.
+Savy reads every weekly grocery flyer from 4–5 major Vancouver chains, learns what a student actually buys from their receipts, and shows them only the deals on their own items plus the cheapest store for the whole basket. It is a mobile-first PWA for UBC students, built for HackCamp 2026 (Nov 7–8) with Databricks as the main sponsor track.
 
 **Community problem.** Students on a food budget re-make the same decision every week: where to shop and what is actually cheap. Today that means 30–40 pages of flyers across Flipp and store apps, none of which know what you buy or compare unit prices across stores.
 
@@ -90,7 +90,7 @@ The app is a mobile-first PWA, not a native app: no store review, a QR code on t
 
 **HIG mapping.**
 
-| HIG element | Real Deal implementation |
+| HIG element | Savy implementation |
 | --- | --- |
 | Tab bar | 3 tabs: My List, Deals, Basket |
 | Navigation | Large-title headers, back by swipe |
@@ -144,4 +144,4 @@ The receipt in step 3 is pre-tested against the extractor Saturday evening. The 
 
 **3 a.m. cut list, in order.** StatCan "real deal" badge → Genie space and dashboard → product-photo intake → voice intake → split-shop view. Receipt intake, matching and the basket are never cut.
 
-**Known comparables.** Flipp has typed shopping lists matched to flyers. nürish (HackCamp 2022) was a static campus deals list. Real Deal's differentiators are receipt-driven list building, a persistent profile, and cross-store unit-price comparison; those three must work live.
+**Known comparables.** Flipp has typed shopping lists matched to flyers. nürish (HackCamp 2022) was a static campus deals list. Savy's differentiators are receipt-driven list building, a persistent profile, and cross-store unit-price comparison; those three must work live.
