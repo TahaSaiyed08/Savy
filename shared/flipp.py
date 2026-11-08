@@ -24,12 +24,11 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import NamedTuple
-from urllib.parse import urlsplit
 
 import httpx
 from PIL import Image
 
-from apps.api.models import ExtractedItem, FlyerItem
+from apps.api.models import ExtractedItem, FlyerItem, clean_store_url
 from shared.stores import STORES
 from shared.units import normalize_unit, unit_price
 
@@ -234,10 +233,8 @@ def split_name(brand: str | None, name: str) -> tuple[str | None, str, str | Non
 
 
 def store_url(raw: str | None) -> str | None:
-    """The store's own page for an item, from Flipp's ttm_url, without Flipp's tracking tags. https only: the value
-    comes from outside and ends up in a link."""
-    parts = urlsplit(raw or "")
-    return f"https://{parts.netloc}{parts.path}" if parts.scheme == "https" and parts.netloc else None
+    """The store's own page for an item, from Flipp's ttm_url (see models.clean_store_url)."""
+    return clean_store_url(raw)
 
 
 def _size_of_name(name: str):

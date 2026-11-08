@@ -6,6 +6,7 @@ Change a field here and the generated client changes with it; CI fails until you
 import json
 from datetime import date, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -14,6 +15,20 @@ Mode = Literal["flyer_page", "receipt", "product", "manual"]
 Source = Literal["receipt", "photo", "manual", "voice", "flyer"]  # flyer: identity copied from a listing
 Field4 = Literal["brand", "item", "variant", "size"]
 # [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
+# Flipp hands some stores' links through an ad-click tracker, which lands on a generic page with Flipp's tags on it.
+_NOT_A_STORE = ("doubleclick.net", "googleadservices.com", "flipp.com", "wishabi.com", "wishabi.net")
+
+
+def clean_store_url(raw: str | None) -> str | None:
+    """The store's own page for an item, without tracking tags. https only, and never Flipp or an ad tracker: the
+    value comes from outside and ends up in a link people tap."""
+    parts = urlsplit(raw or "")
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not parts.netloc or any(host == d or host.endswith("." + d) for d in _NOT_A_STORE):
+        return None
+    return f"https://{parts.netloc}{parts.path}"
+
+
 BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
 
 
@@ -73,6 +88,11 @@ class FlyerItem(BaseModel):  # Silver
     conditions: str | None = None  # "Get PC Optimum 1,000 pts", "Limit 4"
     store_url: str | None = None  # the store's own page for the item, when Flipp knows it
     category: str | None = None  # Dairy & eggs, Produce, ...: from the AI refiner, null until it has run
+
+    @field_validator("store_url")
+    @classmethod
+    def _store_page_only(cls, v):  # also cleans rows saved to disk by an older parser
+        return clean_store_url(v)
 
     @field_validator("bbox", mode="before")
     @classmethod
