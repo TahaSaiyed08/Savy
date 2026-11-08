@@ -50,7 +50,9 @@ export function Row({
       <Tag
         onClick={onClick}
         type={onClick ? "button" : undefined}
-        className="flex min-h-tap flex-1 items-center gap-3 py-2.5 pr-4 text-left"
+        className={`flex min-h-tap flex-1 items-center gap-3 py-2.5 pr-4 text-left ${
+          onClick ? "transition-colors active:bg-bg" : ""
+        }`}
       >
         {leading}
         <div className="min-w-0 flex-1">
@@ -157,7 +159,7 @@ export function PrimaryButton({
       type={type}
       onClick={onClick}
       disabled={disabled || loading}
-      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-white shadow-tint transition-opacity disabled:opacity-40"
+      className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-tint text-[17px] font-semibold text-white shadow-tint transition-[opacity,transform] active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
     >
       {loading && <Loader size={18} />}
       {children}
@@ -179,7 +181,7 @@ export function Chip({
       type="button"
       onClick={onClick}
       aria-pressed={selected}
-      className={`flex h-tap shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[15px] transition-colors ${
+      className={`flex h-tap shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[15px] transition-[background-color,color,transform] active:scale-95 ${
         selected ? "bg-tint font-semibold text-white shadow-tint" : "border border-separator bg-elevated text-label"
       }`}
     >
