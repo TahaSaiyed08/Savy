@@ -366,6 +366,102 @@ def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
         databricks_sql.query("SELECT 1", fallback=False)
 
 
+def _databricks_extractor(monkeypatch, reply='{"items": []}', fail=None):
+    from apps.api import databricks_sql
+    from apps.api.extractors import DatabricksAIExtractor
+
+    monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+    monkeypatch.setenv("DATABRICKS_WAREHOUSE_ID", "wh")
+    calls = {"sql": [], "uploads": [], "deletes": []}
+    files = SimpleNamespace(upload=lambda path, f, overwrite: calls["uploads"].append((path, f.read())),
+                            delete=lambda path: calls["deletes"].append(path))
+
+    def run_long(sql, **params):
+        calls["sql"].append((sql, params))
+        if fail:
+            raise fail
+        return [{"r": reply}]
+
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(files=files))
+    monkeypatch.setattr(databricks_sql, "run_long", run_long)
+    return DatabricksAIExtractor(), calls
+
+
+def test_databricks_extractor_reads_an_uploaded_image_then_deletes_it(monkeypatch):
+    reply = '{"items": [{"item": "milk", "price": 6.49, "confidence": 0.9}], "store": "Safeway", "total": 6.49}'
+    ext, calls = _databricks_extractor(monkeypatch, reply)
+    x = ext.extract("receipt", image=PNG, media_type="image/jpeg")
+
+    assert x.store == "Safeway" and x.total == 6.49 and x.items[0].item == "milk"
+    path = calls["uploads"][0][0]
+    assert path.startswith(ext.UPLOADS + "/") and path.endswith(".png") and calls["uploads"][0][1] == PNG
+    sql, params = calls["sql"][0]
+    assert "read_files(:path" in sql and "files => content" in sql and "databricks-llama-4-maverick" in sql
+    assert params["path"] == path and "receipt" in params["prompt"].lower() and '"json_schema"' in params["fmt"]
+    assert calls["deletes"] == [path]
+
+
+def test_databricks_extractor_sends_text_without_an_upload(monkeypatch):
+    ext, calls = _databricks_extractor(monkeypatch, '{"items": [{"item": "eggs", "confidence": 0.9}]}')
+    assert ext.extract("manual", text="two dozen eggs").items[0].item == "eggs"
+    sql, params = calls["sql"][0]
+    assert not calls["uploads"] and "read_files" not in sql and params["text"] == "two dozen eggs"
+
+
+def test_databricks_extractor_rejects_heic_before_uploading(monkeypatch):
+    ext, calls = _databricks_extractor(monkeypatch)
+    with pytest.raises(HTTPException) as e:
+        ext.extract("receipt", image=HEIC, media_type="image/heic")
+    assert e.value.status_code == 415 and not calls["uploads"] and not calls["sql"]
+
+
+@pytest.mark.parametrize("reply, fail, status", [
+    ("not json at all", None, 422),  # the model answered off-schema: like a Claude refusal
+    (None, None, 422),
+    ("{}", RuntimeError("statement FAILED: endpoint not found"), 502),  # the service itself failed
+    ("{}", TimeoutError("still running after 90 s"), 502),
+])
+def test_databricks_extractor_failures_map_like_claude(monkeypatch, reply, fail, status):
+    ext, calls = _databricks_extractor(monkeypatch, reply, fail)
+    app.dependency_overrides[get_extractor] = lambda: ext
+    try:
+        r = c.post("/intake/receipt", headers=H, files={"file": ("r.png", io.BytesIO(PNG), "image/png")})
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == status, r.text
+    assert calls["deletes"] == [calls["uploads"][0][0]]  # the upload is cleaned up on every path
+
+
+def test_databricks_extractor_needs_its_settings(monkeypatch):
+    from apps.api.extractors import DatabricksAIExtractor
+
+    monkeypatch.delenv("DATABRICKS_WAREHOUSE_ID", raising=False)
+    monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+    with pytest.raises(RuntimeError, match="DATABRICKS_WAREHOUSE_ID"):
+        DatabricksAIExtractor()
+    monkeypatch.setenv("DATABRICKS_WAREHOUSE_ID", "wh")
+    monkeypatch.setenv("DATABRICKS_EXTRACT_MODEL", "x'); DROP TABLE users; --")
+    with pytest.raises(ValueError):
+        DatabricksAIExtractor()
+
+
+def test_run_long_cancels_a_statement_past_its_deadline(monkeypatch):
+    from databricks.sdk.service.sql import StatementState
+
+    from apps.api import databricks_sql
+
+    running = SimpleNamespace(statement_id="s1", status=SimpleNamespace(state=StatementState.RUNNING))
+    cancelled = []
+    api = SimpleNamespace(execute_statement=lambda **kw: running, get_statement=lambda sid: running,
+                          cancel_execution=cancelled.append)
+    monkeypatch.setenv("DATABRICKS_WAREHOUSE_ID", "wh")
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(statement_execution=api))
+    monkeypatch.setattr(databricks_sql.time, "sleep", lambda s: None)
+    with pytest.raises(TimeoutError):
+        databricks_sql.run_long("SELECT 1", timeout=0)
+    assert cancelled == ["s1"]
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):
