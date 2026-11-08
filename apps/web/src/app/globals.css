@@ -6,7 +6,11 @@
   --bg: #f2f2f7; /* systemGroupedBackground */
   --elevated: #ffffff; /* secondarySystemGroupedBackground */
   --label: #000000;
-  --label-2: rgb(60 60 67 / 0.6);
+  /* iOS's own secondaryLabel (0.6) computes to ~3.3-3.4:1 against --bg/--elevated -- below WCAG AA's 4.5:1
+     for normal text. 0.75 clears both (~4.9:1 on --bg, ~5.2:1 on --elevated) while staying visually
+     "secondary" next to --label. Dark mode's 0.6 already clears AA against black and elevated (~6:1+), so
+     it's left as-is. */
+  --label-2: rgb(60 60 67 / 0.75);
   --separator: rgb(60 60 67 / 0.29);
   --tint: #248a3d; /* systemGreen, accessible variant: savings */
   --destructive: #ff3b30;
@@ -76,7 +80,7 @@
   --bg: #f2f2f7;
   --elevated: #ffffff;
   --label: #000000;
-  --label-2: rgb(60 60 67 / 0.6);
+  --label-2: rgb(60 60 67 / 0.75);
   --separator: rgb(60 60 67 / 0.29);
   --tint: #248a3d;
   --destructive: #ff3b30;
