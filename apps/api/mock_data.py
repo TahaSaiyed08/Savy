@@ -1,13 +1,19 @@
 """This week's fake flyers. Shapes match realdeal.core.flyer_items so mock and real modes are interchangeable.
 
-The rows are chosen to show exact matching: near-misses (2 L vs 4 L, 1% vs 2%, chocolate, other brands) sit next to
-true matches, including 2 x 1.89 L for 4 L and a per-lb price.
+FLYER_ITEMS loads apps/api/data/flipp_snapshot.json if it exists (made by `make flipp-snapshot`) and falls back to
+this canned list otherwise.
 """
+import json
+import logging
 from datetime import date, timedelta
+from pathlib import Path
 
 from apps.api.models import FlyerItem
 from shared.stores import STORES as _NAMES
 from shared.units import normalize_unit, unit_price
+
+log = logging.getLogger(__name__)
+_SNAPSHOT = Path(__file__).parent / "data" / "flipp_snapshot.json"
 
 WEEK = date(2026, 11, 5)
 STORES = list(_NAMES.values())
@@ -20,7 +26,7 @@ _ROWS = [  # store, brand, item, variant, size text, price
     ("Save-On-Foods", "Dairyland", "milk", "chocolate", "4 L", 6.99),
     ("Safeway", "Dairyland", "milk", "2%", "4 L", 5.99),
     ("Safeway", "Lucerne", "milk", "2%", "4 L", 5.49),
-    ("Real Canadian Superstore", "Dairyland", "milk", "2%", "2 x 1.89 L", 6.79),
+    ("Real Canadian Superstore", "Dairyland", "milk", "2 x 1.89 L", 6.79),
     ("No Frills", "Dairyland", "milk", "1%", "4 L", 5.29),
     ("Save-On-Foods", "Western Family", "eggs", "large", "12 ea", 4.99),
     ("No Frills", "No Name", "eggs", "large", "12 ea", 3.99),
@@ -58,7 +64,17 @@ def _items() -> list[FlyerItem]:
     return out
 
 
-FLYER_ITEMS = _items()
+def _load_flyer_items() -> list[FlyerItem]:
+    if _SNAPSHOT.exists():
+        try:
+            data = json.loads(_SNAPSHOT.read_text())
+            return [FlyerItem(**row) for row in data["rows"]]
+        except Exception:
+            log.warning("couldn't load %s; falling back to canned flyer data", _SNAPSHOT, exc_info=True)
+    return _items()
+
+
+FLYER_ITEMS = _load_flyer_items()
 
 # Every new device starts with these, pre-moved into the Basket, so Pantry and Basket are never empty in a demo.
 SEED_ITEMS = [

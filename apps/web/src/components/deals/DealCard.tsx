@@ -32,13 +32,9 @@ export function DealCard({
     <button
       type="button"
       onClick={onClick}
-<<<<<<< HEAD
       className={`flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl border bg-elevated text-left shadow-card transition-[transform,box-shadow] active:scale-[0.97] ${
         isCheapest ? "border-tint/50 shadow-tint" : "border-separator"
       }`}
-=======
-      className="flex w-[112px] shrink-0 flex-col overflow-hidden rounded-xl border border-separator bg-elevated text-left shadow-card"
->>>>>>> origin/main
     >
       <div className="relative size-[112px] bg-elevated">
         {img ? (
@@ -58,14 +54,9 @@ export function DealCard({
         )}
         <p className="truncate text-[11px] text-label-2">{deal.flyer_label}</p>
         {badge && (
-<<<<<<< HEAD
           <div className="flex items-center gap-1 rounded-lg border border-savings-border bg-savings-bg px-1.5 py-1">
             <Tag size={12} className="shrink-0 text-savings-text" />
             <p className="truncate text-[13px] font-medium text-savings-text">{badge}</p>
-=======
-          <div className="truncate rounded-md border border-savings-border bg-savings-bg px-1 py-0.5">
-            <p className="truncate text-[11px] font-medium text-savings-text">{badge}</p>
->>>>>>> origin/main
           </div>
         )}
       </div>

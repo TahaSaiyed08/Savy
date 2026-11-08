@@ -316,6 +316,45 @@ def test_patch_and_basket_statements(monkeypatch):
     assert all("user_id = :user_id" in s and p["user_id"] == str(uid) for s, p in writes)
 
 
+def test_flipp_live_fallback_fires_when_search_and_like_both_miss(monkeypatch):
+    import json
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import SaveItems
+    from shared import flipp
+
+    writes = []
+
+    def no_index():
+        raise RuntimeError("no AI Search index")
+
+    def empty_like(sql, rows):
+        return []  # LIKE finds nothing either
+
+    def fake_search(q):
+        assert q == "milk 2% 4 l"
+        return [{"id": 999, "flyer_id": 123, "merchant_name": "Safeway",
+                "name": "Lucerne 2% milk 4 L", "current_price": 5.99}]
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_flipp_cache", {})
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
+    monkeypatch.setattr(databricks_sql, "query", empty_like)
+    monkeypatch.setattr(databricks_sql, "_client", no_index)
+    monkeypatch.setattr(flipp, "search", fake_search)
+
+    store.add_items(uuid.uuid4(), SaveItems(
+        source="manual", items=[{"item": "milk", "variant": "2%", "size_qty": 4, "size_unit": "l", "confidence": 0.9}]))
+
+    flyer_writes = [p for s, p in writes if "INSERT INTO flyer_items" in s]
+    match_writes = [p for s, p in writes if "INSERT INTO user_item_matches" in s]
+    assert flyer_writes and match_writes
+    rows = json.loads(flyer_writes[0]["rows"])
+    assert rows[0]["item_id"] == "flipp-live-999" and rows[0]["store"] == "Safeway"
+    matches = json.loads(match_writes[0]["rows"])
+    assert matches[0]["flyer_item_id"] == "flipp-live-999"
+
+
 def test_receipt_photo_and_row_are_saved(monkeypatch):
     from datetime import date
 

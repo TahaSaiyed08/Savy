@@ -32,7 +32,6 @@ type PendingSave = {
   boughtAt?: string | null;
 };
 
-<<<<<<< HEAD
 function ListSkeleton() {
   return (
     <section className="mx-4 mb-6">
@@ -51,14 +50,10 @@ function ListSkeleton() {
   );
 }
 
-export default function MyList() {
-  const { items, loading, error, deleteError, addItems, deleteItem, refetch } = useItems();
-=======
 export default function Pantry() {
   const { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch } = useItems();
   // The other stores' listings for the deal sheet; the tapped item's own cheapest comes with GET /items.
   const { data: deals } = useApi(() => api.GET("/deals", { params: withUser() }));
->>>>>>> origin/main
   const [flow, setFlow] = useState<Flow>({ step: "closed" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | undefined>();
