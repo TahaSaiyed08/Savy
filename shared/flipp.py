@@ -7,7 +7,8 @@ Verified live 2026-11-07 for postal code V6T1Z4 (near UBC):
   the weekly grocery flyer is the one whose categories_csv contains "Groceries".
 - GET /flyers/{id}?locale=en-ca -> {"items": [...], "pages": [...], "has_corrections": bool}. List items have
   `price` as a plain numeric string, empty for ~14% of items (confirmed live). `pages[]` entries
-  (id, left, bottom, right, top, page, name) carry NO image URL, confirmed live on five different flyers.
+  (id, left, bottom, right, top, page, name) carry NO image URL of their own. The flyer record instead has a `path`,
+  `width`, `height` and `resolutions`, from which the page picture is stitched out of 256 px tiles (render_page).
 - GET /items/{item_id} -> {"item": {...}}. Adds `description` (often not a size, sometimes null),
   `current_price` (plain numeric string, can be empty), `image_url` (a product photo, about 353x400, not the
   flyer page: `http://f.wishabi.net/page_pdf_images/...`).
@@ -34,6 +35,8 @@ from shared.units import normalize_unit, unit_price
 
 log = logging.getLogger(__name__)
 
+# Where things live. BASE is the JSON API; TILES is a separate image host. Neither needs a key, which is also why
+# the limits below (timeout, one retry, a small worker pool) are kept modest.
 BASE = "https://backflipp.wishabi.com/flipp"
 TILES = "https://f.wishabi.net"  # flyer images: a zoom pyramid of 256 px tiles, <path><level>_<col>_<row>.jpg
 USER_AGENT = "RealDeal/1.0 (+https://github.com/krish-arora-88/SurRealDeal; hackathon project, polite use)"
@@ -42,10 +45,15 @@ RETRY_SECONDS = 0.5
 TIMEOUT_SECONDS = 20.0
 WORKERS = 6  # item details in flight at once: a whole flyer in seconds, without hammering an unofficial API
 TILE = 256
+# A stitched page is the sharpest zoom level that stays under these limits, so a page is always a ~1 MB JPEG whether
+# the flyer was cut for phones or for print.
 PAGE_MAX_PIXELS = 4_000_000  # a stitched page stays about 1 MB however big the flyer
 PAGE_MAX_HEIGHT = 2700
+# Keeping ten stores per postal code bounds both the download time and the size of the saved copy.
 MAX_STORES = 10  # flyers kept per postal code, best-ranked by Flipp first
 GROCERY_CATEGORY = "Groceries"
+# Saved feeds record the version of the parser that made them (see flyers_live._read), so improving how names or
+# sizes are read only needs this number raised to roll the improvement out to every cached copy.
 PARSER_VERSION = 4  # bump when name/size parsing changes: saved flyers from an older parser are downloaded again
 
 # Grocery chains worth showing (Flipp merchant names, case-insensitive). Flipp also lists brand flyers ("President's
@@ -57,6 +65,7 @@ CHAINS = {c.casefold() for c in (
     "Buy-Low Foods", "PriceSmart Foods", "Longo's", "Choices Markets", "Nesters Market", "Urban Fare",
     "Whole Foods Market",
 )}
+# Flipp's merchant names are sometimes longer than the name shoppers know; these are shown instead.
 DISPLAY_NAMES = {"t&t supermarket": "T&T", "pricesmart foods": "PriceSmart Foods"}
 
 # Flipp merchant name -> our store key (shared/stores.py), confirmed against the live /flyers response.
@@ -68,6 +77,11 @@ MERCHANT_TO_STORE_KEY = {
     "T&T Supermarket": "tnt",
 }
 
+# Name-parsing patterns used by split_name below, each tuned against real flyer text:
+#   _MULTI    a multi-buy price ("2/ $7.50") applies to that many units
+#   _OR       "X or Y" tiles advertise several products under one price and size
+#   _SIZE_TAIL the trailing "2.5 LB" / "375 g" that belongs to the size, not the name
+#   _VARIANTS  qualifiers (2%, organic, boneless...) that go in the variant column rather than the item name
 _MULTI = re.compile(r"^\s*(\d+)\s*(?:/|for\b)", re.I)  # pre_price_text "2/" or "2 for"
 _OR = re.compile(r"\s+or\s+", re.I)
 _MARKS = re.compile("[®™©]")
@@ -80,9 +94,13 @@ _VARIANTS = re.compile(
 
 
 def _fold(s: str) -> str:
+    # Lowercase with accents flattened, so "Crème" compares equal to "creme" when checking whether a name starts with
+    # its brand.
     return unicodedata.normalize("NFKD", s).encode("ascii", "replace").decode().lower()
 
 
+# One shared client (connection pooling), safe across threads. The pool is sized a little above WORKERS so a retry
+# never has to wait for a free connection.
 _http = httpx.Client(timeout=TIMEOUT_SECONDS, headers={"User-Agent": USER_AGENT}, follow_redirects=True,
                      limits=httpx.Limits(max_connections=WORKERS + 2))
 
@@ -118,6 +136,8 @@ def display_name(merchant: str) -> str:
     return DISPLAY_NAMES.get(merchant.casefold(), merchant)
 
 
+# Which of the ~90 flyers near a postal code to show: only real grocery chains (CHAINS), and per chain the widest
+# grocery flyer, because a chain can publish several (weekly, regional, a themed catalogue).
 def chain_flyers(flyers: list[dict], limit: int = MAX_STORES) -> dict[str, dict]:
     """store display name -> that chain's widest grocery flyer, best-ranked chains first. Flipp's `priority` is its
     own ranking for the postal code; a chain can run several grocery flyers, and the widest is the weekly one."""
