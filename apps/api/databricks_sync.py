@@ -17,8 +17,11 @@ from apps.api.models import FlyerItem
 
 log = logging.getLogger(__name__)
 
+# The two tables this module owns. live_listings is a snapshot (what's on sale now, replaced per postal code);
+# price_history only ever grows, so prices can be compared week over week.
 LISTINGS = "realdeal.core.live_listings"
 HISTORY = "realdeal.core.price_history"
+# Credentials the sync needs. Without all three it quietly does nothing, so the API still runs on a laptop.
 _NEEDS = ("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID")
 
 # Column comments matter: Genie reads them to understand the table.
@@ -52,6 +55,7 @@ _LISTING_COLUMNS = f"""
   fetched_at TIMESTAMP COMMENT 'When this listing was downloaded'
 """
 
+# The CREATE statements use IF NOT EXISTS, so they are safe to run on every sync and make the tables on first use.
 _CREATE_LISTINGS = (
     f"CREATE TABLE IF NOT EXISTS {LISTINGS} ({_LISTING_COLUMNS}) "
     "COMMENT 'This week''s grocery flyer listings near each postal code, from Flipp. One row per advertised product.'"
@@ -68,6 +72,8 @@ _CREATE_HISTORY = (
     "Use it to see how a price moves between weeks.'"
 )
 
+# How rows reach the warehouse: the whole batch is sent as ONE JSON string parameter, and from_json + inline() turns it
+# back into rows. That keeps every statement a fixed text however many listings there are, with no per-row SQL.
 _SCHEMA = ("ARRAY<STRUCT<item_id: STRING, store: STRING, week_start: STRING, valid_from: STRING, valid_to: STRING, "
            "brand: STRING, item: STRING, variant: STRING, category: STRING, size_qty: DOUBLE, size_unit: STRING, "
            "price: DOUBLE, regular_price: DOUBLE, unit_price: DOUBLE, unit: STRING, conditions: STRING, "
@@ -85,10 +91,14 @@ _SELECT_LISTINGS = (
     "brand, item, variant, category, size_qty, size_unit, price, regular_price, unit_price, unit, conditions, "
     f"raw_text, page_no, image_url, flyer_url, item_url, store_url, CAST(:fetched_at AS TIMESTAMP) FROM ({_BATCH})"
 )
+# REPLACE WHERE swaps out one postal code's rows atomically, so a reader never sees half a refresh. Only the first
+# chunk uses it; later chunks of a big feed append.
 _REPLACE_LISTINGS = (  # first chunk
     f"INSERT INTO {LISTINGS} ({_LISTING_NAMES}) REPLACE WHERE postal = :postal {_SELECT_LISTINGS}"
 )
 _APPEND_LISTINGS = f"INSERT INTO {LISTINGS} ({_LISTING_NAMES}) {_SELECT_LISTINGS}"  # the rest
+# MERGE inserts a listing the first time it is seen and updates its price if the flyer changed it mid-week; unchanged
+# rows are left alone, so history is not rewritten on every refresh.
 _MERGE_HISTORY = (
     f"MERGE INTO {HISTORY} t USING (SELECT item_id, :postal AS postal, store, CAST(week_start AS DATE) AS week_start, "
     "brand, item, variant, size_qty, size_unit, price, regular_price, unit_price, unit, "
@@ -103,10 +113,12 @@ _MERGE_HISTORY = (
 
 
 def enabled() -> bool:
+    # Strictly opt-in (== "1"), because turning it on writes to a shared workspace: it is never a side effect.
     return os.getenv("REALDEAL_DATABRICKS_SYNC") == "1" and all(os.getenv(k) for k in _NEEDS)
 
 
 def _row(f: FlyerItem) -> dict:
+    # One listing as the plain dict the JSON batch expects. Dates are strings here and CAST to DATE in the SQL.
     return {
         "item_id": f.item_id, "store": f.store, "week_start": str(f.week_start),
         "valid_from": str(f.valid_from) if f.valid_from else None, "valid_to": str(f.valid_to) if f.valid_to else None,
@@ -129,6 +141,8 @@ def run(sql: str, timeout: float = 300.0, **params) -> list[list]:
 
     from apps.api import databricks_sql as db
 
+    # Unlike the request-path client, this waits: a sleeping serverless warehouse can take a minute to start, and a
+    # background sync can afford that.
     api = db._client().statement_execution
     r = api.execute_statement(
         statement=sql, warehouse_id=os.environ["DATABRICKS_WAREHOUSE_ID"], catalog="realdeal", schema="core",
@@ -149,6 +163,7 @@ _ADD_CATEGORY = f"ALTER TABLE {LISTINGS} ADD COLUMNS (category STRING COMMENT '{
 
 
 def ensure_tables() -> None:
+    # Creates what is missing and upgrades an older table in place, so a deployment never needs a manual migration.
     run(_CREATE_LISTINGS)
     run(_CREATE_HISTORY)
     # Tables made before categories existed lack the column, and CREATE TABLE IF NOT EXISTS won't add it.
@@ -156,6 +171,7 @@ def ensure_tables() -> None:
         run(_ADD_CATEGORY)
 
 
+# A statement's parameters can total about 1 MB; staying at 800 KB leaves headroom for the SQL text and JSON escaping.
 MAX_PARAMETER_CHARS = 800_000  # Databricks refuses statements whose parameters total over 1,048,576 characters
 
 
@@ -174,6 +190,7 @@ def chunks(rows: list[dict]) -> list[str]:
 
 def push(postal: str, rows: list[FlyerItem], fetched_at: datetime) -> None:
     """Replace this postal code's live listings and add anything new to the price history."""
+    # Order matters: tables first, then each chunk goes into the live table and the history before the next chunk.
     ensure_tables()
     # A copy saved by an older parser carries a placeholder time (year 1) to mark it stale; don't record that.
     when = (fetched_at if fetched_at.year > 2000 else datetime.now(UTC)).isoformat()
