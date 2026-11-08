@@ -257,7 +257,7 @@ def phone_demo():
 
 BRICKS = [
     # row (0 = bottom), col, span, label, sublabel
-    (0, 0, 1, "Flipp → Unity Catalog", "live flyers, synced"),
+    (0, 0, 1, "Flyers → Unity Catalog", "live flyers, synced"),
     (0, 1, 1, "Volumes", "pages and receipts"),
     (0, 2, 1, "Lakeflow", "Bronze → Silver → Gold"),
     (1, 0, 1, "SQL Statement API", "every read and write"),
@@ -482,8 +482,8 @@ def devpost():
 .btn{animation:btn 9s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
 @keyframes btn{0%,76%{transform:scale(1)}82%{transform:scale(.94)}88%,100%{transform:scale(1)}}
 """
-    tags = ["Databricks", "Genie", "Gemini", "ElevenLabs", "Figma", "Claude", "Next.js", "FastAPI", "Flipp"]
-    colors = ["#FF3621", "#FF6A4D", "#6E9BFF", "#8B6CFF", "#A259FF", "#D97757", "#EDEDED", "#10B981", "#FFC83D"]
+    tags = ["Databricks", "Genie", "Gemini", "ElevenLabs", "Figma", "Claude", "Next.js", "FastAPI"]
+    colors = ["#FF3621", "#FF6A4D", "#6E9BFF", "#8B6CFF", "#A259FF", "#D97757", "#EDEDED", "#10B981"]
     pills, px, py = "", 470, 80
     for i, (t, c) in enumerate(zip(tags, colors, strict=True)):
         pw = 44 + len(t) * 12

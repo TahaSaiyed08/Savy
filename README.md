@@ -44,7 +44,7 @@ Real screenshots of the app running against this week's real flyers near V6T 1Z4
 
 ## How it works
 
-1. **Flyers.** The API pulls this week's real flyers for your postal code from [Flipp](https://flipp.com): up to ten grocery chains, anywhere in Canada. It keeps them fresh by itself (it checks hourly and re-downloads only the stores whose flyer changed).
+1. **Flyers.** The API pulls this week's real flyers for your postal code from public flyer feeds: up to ten grocery chains, anywhere in Canada. It keeps them fresh by itself (it checks hourly and re-downloads only the stores whose flyer changed).
 2. **Your items.** Add what you buy by scanning a receipt, photographing a product, typing it, saying it, or tapping **+** on any flyer item. Each is read into brand, item, variant and size.
 3. **Exact matches only.** A listing matches only if brand, item, variant and size all agree (a 4 L jug is not a 2 L one). Sizes are compared in base units, so `2 x 1.89 L` and `4 L` are the same.
 4. **The cheapest store.** Each item shows its cheapest store and how much it saves over the next. Tap it to open the real printed flyer page with the item outlined, and a link to the store's own page for the product.
@@ -76,13 +76,13 @@ The Overall Winner and nwChoice awards need no opt-in.
 ### Databricks: the lakehouse under the whole app
 
 <p align="center">
-  <img src="docs/assets/databricks.svg" width="100%" alt="Animated wall of bricks: Flipp to Unity Catalog, Volumes, Lakeflow, SQL Statement API, live_listings and price_history, ai_query, Genie, Model Serving and a Databricks App" />
+  <img src="docs/assets/databricks.svg" width="100%" alt="Animated wall of bricks: flyers to Unity Catalog, Volumes, Lakeflow, SQL Statement API, live_listings and price_history, ai_query, Genie, Model Serving and a Databricks App" />
 </p>
 
 | Brick | What it does | Where |
 | --- | --- | --- |
 | **Unity Catalog tables** | `live_listings` (this week, replaced per postal code) and `price_history` (every listing ever seen, merged weekly, so prices can be tracked). | [`databricks_sync.py`](apps/api/databricks_sync.py) |
-| **Lakeflow pipeline** | Bronze → Silver → Gold: flyer pages and Flipp data become `flyer_items` and weekly prices. | [`databricks/pipeline/`](databricks/pipeline) |
+| **Lakeflow pipeline** | Bronze → Silver → Gold: flyer pages and flyer data become `flyer_items` and weekly prices. | [`databricks/pipeline/`](databricks/pipeline) |
 | **SQL Statement API** | Every read and write in Databricks mode. Fixed statements with named parameters, a 5 s budget and a last-good cache, so a slow warehouse never freezes the app. | [`databricks_sql.py`](apps/api/databricks_sql.py), [`store.py`](apps/api/store.py) |
 | **Genie** | A space over the two tables, with instructions and worked examples. The Flyers tab's **Ask** button sends your question and shows the answer, the table and the SQL Genie wrote. | [`genie_space.py`](databricks/setup/genie_space.py), [`genie.py`](apps/api/genie.py) |
 | **Model Serving** | An AI refiner (Llama 4 Maverick) turns messy flyer text into brand, item, variant and **category**, cached per name so a product is only ever asked about once. | [`refine.py`](apps/api/refine.py) |
@@ -163,7 +163,7 @@ HackCamp 2026, Databricks track. The Devpost page holds the story, what it is bu
 
 ## Community impact
 
-**The problem.** Students on a food budget re-make the same decision every week: where to shop, and what is actually cheap. Today that means 30 to 40 pages of flyers across Flipp and store apps, none of which know what you buy or compare unit prices across stores.
+**The problem.** Students on a food budget re-make the same decision every week: where to shop, and what is actually cheap. Today that means 30 to 40 pages of flyers across flyer apps and store apps, none of which know what you buy or compare unit prices across stores.
 
 **What Savy changes.**
 
@@ -182,7 +182,7 @@ HackCamp 2026, Databricks track. The Devpost page holds the story, what it is bu
 flowchart LR
   Phone["Phone PWA<br/>Next.js 15"] -->|"/api/*"| Proxy["Next.js proxy"]
   Proxy --> API["FastAPI"]
-  API -->|"this week's flyers"| Flipp[("Flipp API")]
+  API -->|"this week's flyers"| Flyers[("Public flyer feeds")]
   API -->|"voice"| Eleven["ElevenLabs Scribe"]
   API -->|"receipts, photos, text"| Extract["Claude, Gemini or ai_query"]
   API -->|"SQL Statement API"| UC[("Databricks<br/>Unity Catalog")]
@@ -191,7 +191,7 @@ flowchart LR
   Lakeflow["Lakeflow<br/>Bronze, Silver, Gold"] --> UC
 ```
 
-The API runs in one of two modes. **Mock mode** (the default, no Databricks needed) keeps your list in memory and serves live Flipp flyers. **Databricks mode** reads and writes Unity Catalog tables. Either way the web app talks to the same typed client, generated from the API's OpenAPI schema (`make gen-api`).
+The API runs in one of two modes. **Mock mode** (the default, no Databricks needed) keeps your list in memory and serves live flyers. **Databricks mode** reads and writes Unity Catalog tables. Either way the web app talks to the same typed client, generated from the API's OpenAPI schema (`make gen-api`).
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
@@ -224,8 +224,8 @@ On your phone: run `make tunnel` in a second terminal (`brew install cloudflared
 mic and home-screen install need HTTPS anyway. The URL changes each run.
 
 Other targets: `make test` (pytest and vitest), `make lint` (ruff + eslint + tsc), `make gen-api` (regenerate the typed web
-client after changing the API; CI fails if you forget), `make flipp-snapshot` (download this week's flyers now; see
-"Flyer data: Flipp integration" below), `make databricks-setup` (one time, optional: Delta tables and the Genie space).
+client after changing the API; CI fails if you forget), `make flyer-snapshot` (download this week's flyers now; see
+"Flyer data" below), `make databricks-setup` (one time, optional: Delta tables and the Genie space).
 The browser tests run with `npm --prefix apps/web run test:e2e`.
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
@@ -336,35 +336,28 @@ tunnel, a client on the same network can still spoof its forwarded IP, because N
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
-## Flyer data: Flipp integration
+## Flyer data
 
-Real flyer data comes from [Flipp](https://flipp.com)'s public, unauthenticated flyer API
-(`https://backflipp.wishabi.com/flipp`) via [`shared/flipp.py`](shared/flipp.py). It's unofficial, so the client is polite:
-an identifying User-Agent, a 20 s timeout, one retry, and at most six requests in flight. Endpoints used:
-
-| Endpoint | Gives us |
-| --- | --- |
-| `GET /flyers?locale=en-ca&postal_code=<postal>` | The flyers near a postal code. We keep the grocery chains (an allow-list of about 30) and, per chain, the widest flyer whose `categories_csv` contains "Groceries"; a chain can also run non-grocery flyers (Superstore's Toy Book). |
-| `GET /flyers/{id}?locale=en-ca` | A flyer's tiles and pages. `pages[]` has no image URL of its own; the flyer record has the `path`, size and zoom levels the page picture is stitched from. |
-| `GET /items/{item_id}` | Full tile detail: `current_price`, `pre_price_text` (so "2 for $7.50" is a per-unit price), `original_price`, `sale_story`, a product photo, and `ttm_url`, the store's own page for the item when there is one. |
+This week's flyers come from public weekly-flyer feeds, one set per postal code, read by a small client in `shared/`. The feeds are not an
+official API, so the client is polite (an identifying User-Agent, a 20 s timeout, one retry, and at most six requests at once) and the data is
+best treated as demo data. We keep the grocery chains (an allow-list of about 30) and, per chain, the widest weekly flyer, since a chain can also
+publish non-grocery flyers.
 
 Each tile becomes a `FlyerItem`: name split into brand, item and variant, size read from the name (or the description), unit price,
-and the tile's exact box on its page. Tiles with no price are skipped. Store links go through one cleaner that keeps only
-https store pages and never a Flipp page or an ad tracker.
+and the tile's exact box on its page. A multi-buy price ("2 for $7.50") is stored per unit, and tiles with no price are skipped. Store links go
+through one cleaner that keeps only https store pages and never an aggregator page or an ad tracker.
 
 **Live flyers** (the default for `make dev`): the API ([`flyers_live.py`](apps/api/flyers_live.py)) keeps one feed per postal code under
-`apps/api/data/` (git-ignored) and serves from memory. It checks Flipp hourly and re-downloads only the stores whose flyer changed
-(everything once a day, since Flipp corrects prices in place). A new postal code downloads in the background, about 30 seconds, with a
+`apps/api/data/` (git-ignored) and serves from memory. It checks the feeds hourly and re-downloads only the stores whose flyer changed
+(everything once a day, since prices get corrected in place). A new postal code downloads in the background, about 30 seconds, with a
 loading state in the app. The app sends the shopper's postal code in an `X-Postal-Code` header, set from the location chip on the
-Flyers tab. `make flipp-snapshot [POSTAL=M5V2T6]` forces a download now; `REALDEAL_LIVE_FLYERS=0` serves the small canned list instead.
-Flipp's API is unofficial, so treat this as demo data.
+Flyers tab. `make flyer-snapshot [POSTAL=M5V2T6]` forces a download now; `REALDEAL_LIVE_FLYERS=0` serves the small canned list instead.
 
-**Real flyer pages.** Flipp draws each flyer from a pyramid of 256 px image tiles (`f.wishabi.net/<flyer path>/<level>_<col>_<row>.jpg`,
-rows counted from the bottom). When someone opens a page, the API fetches just that page's tiles, stitches them into the real printed
+**Real flyer pages.** Each flyer is drawn from a pyramid of 256 px image tiles at several zoom levels (rows counted from the bottom). When someone opens a page, the API fetches just that page's tiles, stitches them into the real printed
 page (about 1 MB) and keeps it under `apps/api/data/pages/`; Price Match shows it with the item outlined. Neighbouring pages are drawn in
-the background and pages of ended flyers are deleted. If Flipp has no tiles for a page, the app lays it out from the items' own pictures.
+the background and pages of ended flyers are deleted. If a page has no tiles, the app lays it out from the items' own pictures.
 
-**AI product names.** Flipp gives one free-text name per tile ("NO NAME® NATURALLY IMPERFECT™ POTATOES"). When Databricks credentials are set,
+**AI product names.** Each flyer tile has one free-text name ("NO NAME® NATURALLY IMPERFECT™ POTATOES"). When Databricks credentials are set,
 a model on Model Serving reads it as brand, item, variant and category (No Name, Potatoes, Naturally Imperfect, Produce), which also powers the
 category chips on the Flyers tab. Sizes and prices stay with the parser. Answers are cached on disk by name, so each name is asked about
 once; a failed call leaves the parser's reading and is retried later.
@@ -374,8 +367,8 @@ once; a failed call leaves the parser's reading and is retried later.
 `REALDEAL_DATABRICKS_SYNC=1` in `.env` and every refresh keeps the tables current (price history builds up week by week). Once the space
 exists the Flyers tab shows an **Ask** button. Nothing is written to Databricks unless you do this.
 
-The pipeline path is separate: [`databricks/fetchers/flipp.py`](databricks/fetchers/flipp.py) writes `flyers/<store>/<week_start>/flipp.jsonl` to the
-Volume for all five original stores, with each item's exact tile box, page, price and valid dates; the pipeline turns it into `flyer_items`
+The pipeline path is separate: a fetcher in `databricks/fetchers/` writes each store's weekly flyer to the Volume (`flyers/<store>/<week_start>/`)
+for all five original stores, with each item's exact tile box, page, price and valid dates; the pipeline turns it into `flyer_items`
 (see [`docs/plan.md`](docs/plan.md), WS1 step 6).
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
@@ -405,10 +398,10 @@ as `ws<N>/<topic>`, and open small PRs to `main`. CI (pytest, ruff, eslint, tsc,
 ## Layout
 
 ```
-apps/api/        FastAPI: routes (main.py), models, matching (logic.py), live Flipp feeds (flyers_live.py), Databricks sync, Genie, AI refiner, extractors, STT proxy
+apps/api/        FastAPI: routes (main.py), models, matching (logic.py), live flyer feeds (flyers_live.py), Databricks sync, Genie, AI refiner, extractors, STT proxy
 apps/web/        Next.js 15 PWA: 3 tabs, design tokens (src/app/globals.css), typed client (src/lib/), Playwright tests (e2e/)
-shared/          Flipp client and parsers, normalize_unit, versioned prompts (flyer_page, receipt, product, manual)
-databricks/      sql/ (DDL), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (Flipp), setup/ (Genie space and one-time setup)
+shared/          flyer client and parsers, normalize_unit, versioned prompts (flyer_page, receipt, product, manual)
+databricks/      sql/ (DDL), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (flyers), setup/ (Genie space and one-time setup)
 docs/            plan, design spec, and assets/ (the animated README art, built by assets/generate.py)
 databricks.yml   Asset bundle for the pipeline
 app.yaml         Databricks App that hosts the API for the demo (requirements.txt is its package list)
