@@ -12,7 +12,7 @@ from uuid import UUID
 
 from apps.api import logic
 from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
-from apps.api.models import Deal, Extraction, SaveItems, UserItem
+from apps.api.models import Deal, ExtractedItem, Extraction, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
@@ -142,7 +142,8 @@ def list_items(user_id: UUID) -> list[UserItem]:
 
     rows = db.query("SELECT * FROM user_items WHERE user_id = :user_id ORDER BY added_at DESC",
                     user_id=str(user_id))
-    return [UserItem(**r) for r in rows]
+    # in_basket is nullable (added after rows already existed); NULL means "not in the basket".
+    return [UserItem(**{**r, "in_basket": bool(r.get("in_basket"))}) for r in rows]
 
 
 def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
@@ -188,6 +189,49 @@ def delete_item(user_id: UUID, user_item_id: str) -> None:
 
     db.execute("DELETE FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id",
                user_id=str(user_id), user_item_id=user_item_id)
+
+
+def _mock_update(user_id: UUID, user_item_id: str, **fields) -> UserItem | None:
+    items = _mock_items(user_id)
+    for i, it in enumerate(items):
+        if it.user_item_id == user_item_id:
+            items[i] = it.model_copy(update=fields)
+            return items[i]
+    return None
+
+
+def set_basket(user_id: UUID, user_item_id: str, in_basket: bool) -> UserItem | None:
+    """Move an item into/out of the Basket (the "getting these right now" shortlist of the Pantry)."""
+    if MOCK:
+        return _mock_update(user_id, user_item_id, in_basket=in_basket)
+    from apps.api import databricks_sql as db
+
+    db.execute("UPDATE user_items SET in_basket = :in_basket WHERE user_id = :user_id AND user_item_id = :user_item_id",
+               user_id=str(user_id), user_item_id=user_item_id, in_basket=in_basket)
+    return _get_item(user_id, user_item_id)
+
+
+def update_item(user_id: UUID, user_item_id: str, fields: ExtractedItem) -> UserItem | None:
+    """Edits a Pantry item's identity (brand/item/variant/size) in place."""
+    patch = fields.model_dump(include={"brand", "item", "variant", "size_qty", "size_unit"})
+    if MOCK:
+        return _mock_update(user_id, user_item_id, **patch)
+    from apps.api import databricks_sql as db
+
+    db.execute(
+        "UPDATE user_items SET brand = :brand, item = :item, variant = :variant, size_qty = :size_qty, "
+        "size_unit = :size_unit WHERE user_id = :user_id AND user_item_id = :user_item_id",
+        user_id=str(user_id), user_item_id=user_item_id, **patch,
+    )
+    return _get_item(user_id, user_item_id)
+
+
+def _get_item(user_id: UUID, user_item_id: str) -> UserItem | None:
+    from apps.api import databricks_sql as db
+
+    rows = db.query("SELECT * FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id",
+                    user_id=str(user_id), user_item_id=user_item_id)
+    return UserItem(**{**rows[0], "in_basket": bool(rows[0].get("in_basket"))}) if rows else None
 
 
 def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:

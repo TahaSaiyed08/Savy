@@ -376,6 +376,128 @@
             }
           }
         }
+      },
+      "patch": {
+        "summary": "Edit Item",
+        "description": "Edits a Pantry item's identity (brand/item/variant/size).",
+        "operationId": "edit_item_items__user_item_id__patch",
+        "parameters": [
+          {
+            "name": "user_item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Item Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "UUID generated on the device",
+              "title": "X-User-Id"
+            },
+            "description": "UUID generated on the device"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractedItem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{user_item_id}/basket": {
+      "post": {
+        "summary": "Set Item Basket",
+        "description": "Moves an item into (or out of) the Basket -- the subset of the Pantry you're getting right now.",
+        "operationId": "set_item_basket_items__user_item_id__basket_post",
+        "parameters": [
+          {
+            "name": "user_item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Item Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "UUID generated on the device",
+              "title": "X-User-Id"
+            },
+            "description": "UUID generated on the device"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBasket"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/deals": {
@@ -427,6 +549,7 @@
     "/basket": {
       "get": {
         "summary": "Get Basket",
+        "description": "The store/split-shop comparison, scoped to only the items moved into the Basket.",
         "operationId": "get_basket_basket_get",
         "parameters": [
           {
@@ -888,6 +1011,19 @@
         ],
         "title": "SaveItems"
       },
+      "SetBasket": {
+        "properties": {
+          "in_basket": {
+            "type": "boolean",
+            "title": "In Basket"
+          }
+        },
+        "type": "object",
+        "required": [
+          "in_basket"
+        ],
+        "title": "SetBasket"
+      },
       "SplitLine": {
         "properties": {
           "user_item_id": {
@@ -1029,6 +1165,11 @@
               }
             ],
             "title": "Last Bought At"
+          },
+          "in_basket": {
+            "type": "boolean",
+            "title": "In Basket",
+            "default": false
           }
         },
         "type": "object",

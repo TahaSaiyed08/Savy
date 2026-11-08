@@ -124,6 +124,30 @@ export interface paths {
         delete: operations["delete_item_items__user_item_id__delete"];
         options?: never;
         head?: never;
+        /**
+         * Edit Item
+         * @description Edits a Pantry item's identity (brand/item/variant/size).
+         */
+        patch: operations["edit_item_items__user_item_id__patch"];
+        trace?: never;
+    };
+    "/items/{user_item_id}/basket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Item Basket
+         * @description Moves an item into (or out of) the Basket -- the subset of the Pantry you're getting right now.
+         */
+        post: operations["set_item_basket_items__user_item_id__basket_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -151,7 +175,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Basket */
+        /**
+         * Get Basket
+         * @description The store/split-shop comparison, scoped to only the items moved into the Basket.
+         */
         get: operations["get_basket_basket_get"];
         put?: never;
         post?: never;
@@ -289,6 +316,11 @@ export interface components {
             /** Bought At */
             bought_at?: string | null;
         };
+        /** SetBasket */
+        SetBasket: {
+            /** In Basket */
+            in_basket: boolean;
+        };
         /** SplitLine */
         SplitLine: {
             /** User Item Id */
@@ -342,6 +374,11 @@ export interface components {
             added_at: string;
             /** Last Bought At */
             last_bought_at?: string | null;
+            /**
+             * In Basket
+             * @default false
+             */
+            in_basket: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -619,6 +656,82 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_item_items__user_item_id__patch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description UUID generated on the device */
+                "X-User-Id": string;
+            };
+            path: {
+                user_item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtractedItem"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_item_basket_items__user_item_id__basket_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description UUID generated on the device */
+                "X-User-Id": string;
+            };
+            path: {
+                user_item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetBasket"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItem"];
+                };
             };
             /** @description Validation Error */
             422: {

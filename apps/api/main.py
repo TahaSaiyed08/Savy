@@ -13,7 +13,18 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
-from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, Mode, SaveItems, UserItem
+from apps.api.models import (
+    Basket,
+    Deal,
+    ExtractedItem,
+    Extraction,
+    IntakeResponse,
+    ManualIntake,
+    Mode,
+    SaveItems,
+    SetBasket,
+    UserItem,
+)
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +166,24 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
     store.delete_item(user_id, user_item_id)
 
 
+@app.patch("/items/{user_item_id}")
+def edit_item(user_id: UserId, user_item_id: str, body: ExtractedItem) -> UserItem:
+    """Edits a Pantry item's identity (brand/item/variant/size)."""
+    updated = store.update_item(user_id, user_item_id, body)
+    if not updated:
+        raise HTTPException(404, "item not found")
+    return updated
+
+
+@app.post("/items/{user_item_id}/basket")
+def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket) -> UserItem:
+    """Moves an item into (or out of) the Basket -- the subset of the Pantry you're getting right now."""
+    updated = store.set_basket(user_id, user_item_id, body.in_basket)
+    if not updated:
+        raise HTTPException(404, "item not found")
+    return updated
+
+
 @app.get("/deals")
 def get_deals(user_id: UserId) -> list[Deal]:
     return store.list_deals(user_id)
@@ -162,4 +191,8 @@ def get_deals(user_id: UserId) -> list[Deal]:
 
 @app.get("/basket")
 def get_basket(user_id: UserId) -> Basket:
-    return logic.basket(store.list_items(user_id), store.list_deals(user_id))
+    """The store/split-shop comparison, scoped to only the items moved into the Basket."""
+    basket_items = [i for i in store.list_items(user_id) if i.in_basket]
+    basket_ids = {i.user_item_id for i in basket_items}
+    deals = [d for d in store.list_deals(user_id) if d.user_item_id in basket_ids]
+    return logic.basket(basket_items, deals)

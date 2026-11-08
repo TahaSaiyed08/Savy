@@ -63,6 +63,63 @@ def test_delete_cannot_remove_another_users_item():
     assert target in {i["user_item_id"] for i in after}
 
 
+def test_new_items_default_out_of_basket():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    saved = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                               "source": "manual"}).json()
+    assert saved[0]["in_basket"] is False
+
+
+def test_set_basket_moves_item_in_and_out():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    target = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                                "source": "manual"}).json()[0]["user_item_id"]
+
+    r = c.post(f"/items/{target}/basket", headers=h, json={"in_basket": True})
+    assert r.status_code == 200 and r.json()["in_basket"] is True
+    assert c.get("/items", headers=h).json()[0]["in_basket"] is True  # still in Pantry, now flagged
+
+    r = c.post(f"/items/{target}/basket", headers=h, json={"in_basket": False})
+    assert r.status_code == 200 and r.json()["in_basket"] is False
+
+
+def test_set_basket_404_for_unknown_item():
+    assert c.post("/items/does-not-exist/basket", headers=H, json={"in_basket": True}).status_code == 404
+
+
+def test_basket_only_includes_items_moved_into_it():
+    h = {"X-User-Id": str(uuid.uuid4())}  # fresh user: 5 seeded items, all in_basket=True
+    before = c.get("/basket", headers=h).json()
+    assert before["cheapest_store"]
+
+    target = c.get("/items", headers=h).json()[0]["user_item_id"]
+    c.post(f"/items/{target}/basket", headers=h, json={"in_basket": False})
+
+    after = c.get("/basket", headers=h).json()
+    assert after["split_total"] <= before["split_total"]  # one fewer item to price in
+
+
+def test_edit_item_changes_its_fields():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    target = c.post("/items", headers=h, json={"items": [{"item": "milk", "confidence": 1}],
+                                                "source": "manual"}).json()[0]["user_item_id"]
+
+    r = c.patch(f"/items/{target}", headers=h,
+                json={"brand": "Lucerne", "item": "milk", "variant": "1%", "size_qty": 2, "size_unit": "l",
+                      "confidence": 1})
+    assert r.status_code == 200
+    updated = r.json()
+    assert (updated["brand"], updated["variant"], updated["size_qty"]) == ("Lucerne", "1%", 2)
+
+    refetched = next(i for i in c.get("/items", headers=h).json() if i["user_item_id"] == target)
+    assert refetched["brand"] == "Lucerne"
+
+
+def test_edit_item_404_for_unknown_item():
+    body = {"item": "milk", "confidence": 1}
+    assert c.patch("/items/does-not-exist", headers=H, json=body).status_code == 404
+
+
 def test_rejects_non_image_receipt():
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.txt", io.BytesIO(b"x"), "text/plain")})
     assert r.status_code == 415

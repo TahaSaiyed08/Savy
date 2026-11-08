@@ -84,6 +84,8 @@ class UserItem(BaseModel):
     source: Source
     added_at: datetime
     last_bought_at: datetime | None = None
+    # Pantry (My List) is every item ever added; Basket is the subset explicitly moved here to buy now.
+    in_basket: bool = False
 
 
 class Receipt(BaseModel):
@@ -119,6 +121,10 @@ class IntakeResponse(BaseModel):
 
 class ManualIntake(BaseModel):
     text: str = Field(min_length=1, max_length=500)
+
+
+class SetBasket(BaseModel):
+    in_basket: bool
 
 
 class SaveItems(BaseModel):
