@@ -125,6 +125,37 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
     assert len(matches) == 9  # the PC item is dropped by the brand rule (flyer brand is Purex)
 
 
+def test_receipt_photo_and_row_are_saved(monkeypatch):
+    from datetime import date
+
+    from apps.api import databricks_sql, store
+
+    uploads, writes = [], []
+    files = SimpleNamespace(upload=lambda path, f, overwrite: uploads.append((path, f.read(), overwrite)))
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(databricks_sql, "_client", lambda: SimpleNamespace(files=files))
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(p))
+    uid = uuid.uuid4()
+    jpeg = b"\xff\xd8\xff\xe0rest"
+
+    store.save_receipt(uid, jpeg, Extraction(items=[], store="Superstore", bought_at="2026-11-06", total=100.0))
+    store.save_receipt(uid, PNG, Extraction(items=[], bought_at="06/11/2026"))
+
+    assert uploads[0][0].startswith(f"/Volumes/realdeal/core/uploads/receipts/{uid}/")
+    assert uploads[0][0].endswith(".jpg") and uploads[0][1:] == (jpeg, False) and uploads[1][0].endswith(".png")
+    assert writes[0]["total"] == 100.0 and writes[0]["bought_at"] == date(2026, 11, 6)
+    assert writes[0]["image_path"] == uploads[0][0] and writes[1]["bought_at"] is None
+
+
+def test_receipt_intake_saves_in_background(monkeypatch):
+    from apps.api import store
+
+    saved = []
+    monkeypatch.setattr(store, "save_receipt", lambda uid, image, x: saved.append((uid, image, x.store)))
+    r = c.post("/intake/receipt", headers=H, files={"file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffx"), "image/jpeg")})
+    assert r.status_code == 200 and saved == [(uuid.UUID(H["X-User-Id"]), b"\xff\xd8\xffx", "Save-On-Foods")]
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):

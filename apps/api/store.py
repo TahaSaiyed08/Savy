@@ -1,19 +1,22 @@
 """Data access. REALDEAL_MOCK=1 (the default without DATABRICKS_HOST) keeps everything in memory."""
+import io
 import json
 import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from apps.api import logic
 from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
-from apps.api.models import Deal, SaveItems, UserItem
+from apps.api.models import Deal, Extraction, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
 INDEX = "realdeal.core.flyer_items_idx"
+UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
+_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
 # Batches travel as one JSON string parameter and are expanded with inline(from_json(...)) in SQL.
 _ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
               "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>")
@@ -141,6 +144,34 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
         except Exception:  # the items are saved; they show "no deal" until the weekly re-match
             log.warning("matching failed; saved %d items without matches", len(new), exc_info=True)
     return new
+
+
+def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
+    """Receipt photo to the uploads Volume plus a receipts row. Runs after the response; failures are only logged."""
+    if MOCK:
+        return
+    from apps.api import databricks_sql as db
+    from apps.api.extractors import sniff_media_type
+
+    receipt_id = str(uuid.uuid4())
+    path = f"{UPLOADS}/{user_id}/{receipt_id}.{_EXT.get(sniff_media_type(image) or '', 'bin')}"
+    try:
+        db._client().files.upload(path, io.BytesIO(image), overwrite=False)
+        db.execute(
+            "INSERT INTO receipts (receipt_id, user_id, store, total, bought_at, image_path) "
+            "VALUES (:receipt_id, :user_id, :store, :total, :bought_at, :image_path)",
+            receipt_id=receipt_id, user_id=str(user_id), store=x.store, total=x.total,
+            bought_at=_iso_date(x.bought_at), image_path=path,
+        )
+    except Exception:
+        log.warning("couldn't save receipt %s for %s", receipt_id, user_id, exc_info=True)
+
+
+def _iso_date(s: str | None) -> date | None:
+    try:
+        return date.fromisoformat(s[:10]) if s else None
+    except ValueError:
+        return None
 
 
 def list_deals(user_id: UUID) -> list[Deal]:

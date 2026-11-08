@@ -234,6 +234,8 @@ export interface components {
             store?: string | null;
             /** Bought At */
             bought_at?: string | null;
+            /** Total */
+            total?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

@@ -29,6 +29,7 @@ class Extraction(BaseModel):
     items: list[ExtractedItem]
     store: str | None = None  # receipt header only
     bought_at: str | None = None  # receipt header only, ISO date
+    total: float | None = None  # receipt footer only, amount paid in CAD including tax
 
 
 # --- realdeal.core tables -------------------------------------------------

@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import UUID
 
 import anthropic
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
@@ -105,8 +105,11 @@ def health() -> dict:
 
 
 @app.post("/intake/receipt", dependencies=[Depends(rate_limit)])
-def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
-    return _respond(_extract(ext, "receipt", image=_read(file, "image/"), media_type=file.content_type))
+def intake_receipt(user_id: UserId, file: UploadFile, ext: Ext, background: BackgroundTasks) -> IntakeResponse:
+    image = _read(file, "image/")
+    x = _extract(ext, "receipt", image=image, media_type=file.content_type)
+    background.add_task(store.save_receipt, user_id, image, x)  # after the response, so intake isn't slower
+    return _respond(x)
 
 
 @app.post("/intake/photo", dependencies=[Depends(rate_limit)])
