@@ -168,6 +168,7 @@ def get_item_detail(item_id: int) -> dict:
 
 
 def _price(raw) -> float | None:
+    # Flipp prices arrive as strings ("3.99", "$3.99", "") or numbers; anything unreadable is "no price", never zero.
     if raw in (None, ""):
         return None
     if isinstance(raw, int | float):
@@ -186,6 +187,7 @@ def to_extracted_item(item: dict, detail: dict | None = None) -> ExtractedItem |
     (e.g. "NO NAME NATURALLY IMPERFECT MIXED SWEET PEPPERS, 2.5 LB"). None if there's no usable price —
     callers should skip the row entirely rather than save a priceless deal.
     """
+    # Prefer the item's detail record, whose price is the up-to-date one; fall back to the flyer list's own copy.
     price = _price((detail or {}).get("current_price"))
     if price is None:
         price = _price(item.get("price")) or _price(item.get("current_price"))
@@ -200,7 +202,7 @@ def to_extracted_item(item: dict, detail: dict | None = None) -> ExtractedItem |
         size_qty=size.qty if size else None,
         size_unit=size.unit if size else None,
         price=price,
-        confidence=0.95,  # structured first-party data, not OCR off a photo
+        confidence=0.95,  # structured first-party data, not OCR off a photo (so the app never asks to confirm it)
     )
 
 
@@ -208,6 +210,7 @@ def flyer_item_from(
     x: ExtractedItem, *, item_id: str, page_id: str, store: str, week_start: date, raw_text: str, **placement
 ) -> FlyerItem:
     """Wrap a parsed ExtractedItem into a FlyerItem row, mirroring apps/api/mock_data.py's _item() helper."""
+    # Unit price (per 100 g, per 100 ml or per each) is what makes a 2 L and a 4 L jug comparable.
     size = normalize_unit(f"{x.size_qty}{x.size_unit}") if x.size_qty and x.size_unit else None
     up = unit_price(x.price, size) if x.price is not None else None
     return FlyerItem(
@@ -229,6 +232,7 @@ def split_name(brand: str | None, name: str) -> tuple[str | None, str, str | Non
     "PC® MILK OR DARK CHOCOLATE COVERED ALMONDS, 70 G" is one product, not "Milk": a lone word before "or" is a
     flavour, not a product.
     """
+    # Strip the trademark symbols, then split "A or B" into candidate products; the first product names the row.
     brand = _MARKS.sub("", (brand or "").split("|")[0]).strip() or None
     clean = _MARKS.sub("", name)
     products = _OR.split(clean)
@@ -239,15 +243,18 @@ def split_name(brand: str | None, name: str) -> tuple[str | None, str, str | Non
     def unbranded(text: str) -> str:
         return text[len(brand):].strip() if brand and _fold(text).startswith(_fold(brand)) else text
 
+    # The three cases below are the real-world shapes seen in flyers: a brand-only first part, a one-word flavour
+    # before "or", and the ordinary case where the first product is simply the first.
     first = unbranded(head(products[0]))
     if not first and len(products) > 1:  # "PC OR BLUE MENU ENTREES": the product is named after the "or"
         first = head(products[1])
     elif len(first.split()) == 1 and len(products) > 1 and len(head(products[1]).split()) >= 3:
         first = unbranded(head(clean))
     first = first or clean.split(",")[0].strip()
+    # Pull qualifiers like "2%" or "organic" out of the name into `variant`, so "Organic Milk" and "Milk" are not equal.
     variants = [" ".join(m.group(0).lower().split()) for m in _VARIANTS.finditer(first)]
     item = " ".join(_VARIANTS.sub(" ", first).split()) or first
-    if item.isupper():
+    if item.isupper():  # flyers shout in capitals; show Title Case, keeping small words like "of" lower
         item = _title(item)
     return brand, item, " ".join(variants) or None
 
@@ -264,10 +271,13 @@ def _size_of_name(name: str):
 
 def _placement(item: dict, flyer: dict, pages: list[dict]) -> dict | None:
     """Where the tile sits on its page, as fractions with the origin top-left. Flipp's y axis points up."""
+    # A tile belongs to the page its horizontal centre falls in. Flipp lays all pages side by side in one coordinate
+    # space, and a tile can straddle a page edge.
     cx = (item["left"] + item["right"]) / 2
     page = next((p for p in pages if p["left"] <= cx < p["right"]), None)
     if page is None:
         return None
+    # Convert to fractions of the page. The y axis points up in Flipp and down on screens, hence top/bottom swapped.
     w, h = page["right"] - page["left"], page["top"] - page["bottom"]
     box = [(item["left"] - page["left"]) / w, (page["top"] - item["top"]) / h,
            (item["right"] - page["left"]) / w, (page["top"] - item["bottom"]) / h]
@@ -275,6 +285,7 @@ def _placement(item: dict, flyer: dict, pages: list[dict]) -> dict | None:
         "page_id": f"flipp-{flyer['id']}-{page['page']}", "page_no": page["page"], "page_aspect": round(w / h, 4),
         "bbox": [round(min(max(v, 0.0), 1.0), 4) for v in box],
         "valid_from": flyer["valid_from"][:10], "valid_to": flyer["valid_to"][:10],
+        # The product's own cutout picture, upgraded to https so the app never loads mixed content.
         "image_url": (item.get("cutout_image_url") or "").replace("http://", "https://", 1) or None,
     }
 
@@ -285,14 +296,17 @@ def _row(item: dict, detail: dict, flyer: dict, pages: list[dict], store: str, w
     price = _price(detail.get("current_price")) or _price(item.get("price"))
     if where is None or price is None:
         return None
+    # "2 for $7.50" is $3.75 each: store the per-unit price so comparisons and savings are in the same terms.
     multi = _MULTI.match(detail.get("pre_price_text") or "")
     if multi and int(multi[1]) > 1:  # "2/ $7.50": the price is for that many units
         price = round(price / int(multi[1]), 2)
     name = item.get("name") or ""
     brand, product, variant = split_name(item.get("brand"), name)
+    # The name usually carries the size; the item's description is only a fallback (it is often "Selected varieties").
     size = _size_of_name(name) or normalize_unit(detail.get("description") or "")
     x = ExtractedItem(brand=brand, item=product, variant=variant, size_qty=size.qty if size else None,
                       size_unit=size.unit if size else None, price=price, confidence=0.95)
+    # Keep the text exactly as printed (name plus price text): some sizes and "/lb" rules are only readable from it.
     raw = " ".join(p for p in (name, detail.get("price_text")) if p)
     return flyer_item_from(
         x, item_id=f"flipp-{item['id']}", store=store, week_start=week, raw_text=raw,
