@@ -57,7 +57,7 @@ the `ExtractedItem` fields; `normalize_unit`'s return type.
 
 ## Workstream 2: Backend
 
-Owner: _unclaimed_
+Owner: primenumberhater666
 
 **Must not break:** the OpenAPI schema (paths, request and response models in `apps/api/models.py`); the
 `X-User-Id` contract; mock mode, which stays the default with no `.env`, so WS3 and WS4 can always run the app.
