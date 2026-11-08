@@ -139,7 +139,7 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
     def no_index():
         raise RuntimeError("no AI Search index")
 
-    def like(sql, rows):
+    def like(sql, rows, fresh=False):
         reads.append(sql)
         return [{"user_item_id": r["user_item_id"], "item_id": f"f-{r['item']}", "brand": "Purex"}
                 for r in json.loads(rows)]
@@ -297,6 +297,54 @@ def test_search_keeps_only_current_flyers_top_three_per_store(monkeypatch):
 
     saved = [m["flyer_item_id"] for m in json.loads(writes[0]["rows"])]
     assert saved == ["sof0", "sof1", "sof2", "ss1"] and len(reads) == 1
+
+
+def test_fresh_query_fails_closed_instead_of_serving_cache(monkeypatch):
+    from apps.api import databricks_sql
+
+    up = {"ok": True}
+
+    def run(sql, params):
+        if not up["ok"]:
+            raise RuntimeError("warehouse down")
+        return [{"n": 1}]
+
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]
+    up["ok"] = False
+    assert databricks_sql.query("SELECT 1") == [{"n": 1}]  # screens still get the last good result
+    with pytest.raises(RuntimeError):
+        databricks_sql.query("SELECT 1", fresh=True)
+
+
+def test_sweep_does_not_mark_done_from_a_cached_item_scan(monkeypatch):
+    from datetime import UTC, datetime
+
+    from apps.api import databricks_sql, store
+
+    state = {"sig": "Save-On-Foods=2026-11-05:276:1", "items_up": True}
+    item = {"user_item_id": "u1", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
+            "added_at": datetime.now(UTC)}
+
+    def run(sql, params):  # only the warehouse is faked; the real query() and its cache are exercised
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        if not state["items_up"]:
+            raise RuntimeError("user_items scan timed out")
+        return [item]
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_swept_flyers", None)
+    monkeypatch.setattr(store, "_match_and_store", lambda batch: None)
+    monkeypatch.setattr(databricks_sql, "_run", run)
+    monkeypatch.setattr(databricks_sql, "_last_good", databricks_sql.OrderedDict())
+
+    assert store.rematch_if_new_week() == 1  # caches a good item scan
+    state.update(sig="Save-On-Foods=2026-11-12:300:2", items_up=False)
+    with pytest.raises(RuntimeError):
+        store.rematch_if_new_week()  # must not re-match the cached snapshot
+    assert store._swept_flyers == "Save-On-Foods=2026-11-05:276:1"  # new flyers not marked swept
 
 
 def test_weekly_rematch_does_nothing_in_mock_mode(monkeypatch):

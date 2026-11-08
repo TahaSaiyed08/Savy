@@ -108,7 +108,8 @@ def _retry_rematch(user_id: UUID) -> None:
 # some store's current flyer changed since the last sweep, or on the first poll after a restart (which also covers
 # items whose in-memory retry was lost). "Changed" includes more pages or corrected rows for the same week, not just
 # a new week. It re-matches every item, because an item already matched at one store still needs matching against
-# another store's new rows; the MERGE in _match_and_store keeps that duplicate-free.
+# another store's new rows; the MERGE in _match_and_store keeps that duplicate-free. Its reads (and matching's) use
+# fresh=True: a cached snapshot would be recorded as swept and the items missing from it never retried.
 REMATCH_BATCH = 100
 _swept_flyers: str | None = None
 # A store's current flyer is its own latest week_start: chains start flyers on different days.
@@ -131,10 +132,10 @@ def rematch_if_new_week() -> int:
         return 0
     from apps.api import databricks_sql as db
 
-    sig = db.query(_FLYER_SIGNATURE)[0]["sig"]
+    sig = db.query(_FLYER_SIGNATURE, fresh=True)[0]["sig"]
     if not sig or sig == _swept_flyers:
         return 0
-    items = [UserItem(**r) for r in db.query("SELECT * FROM user_items")]
+    items = [UserItem(**r) for r in db.query("SELECT * FROM user_items", fresh=True)]
     for i in range(0, len(items), REMATCH_BATCH):
         _match_and_store(items[i:i + REMATCH_BATCH])
     _swept_flyers = sig
@@ -166,7 +167,8 @@ def _current_flyers() -> dict[str, str]:
     """item_id -> store for every item in each store's current flyer."""
     from apps.api import databricks_sql as db
 
-    return {r["item_id"]: r["store"] for r in db.query(f"SELECT item_id, store FROM {_CURRENT_FLYERS} f")}
+    return {r["item_id"]: r["store"]
+            for r in db.query(f"SELECT item_id, store FROM {_CURRENT_FLYERS} f", fresh=True)}
 
 
 def _current_top(hits: list[tuple], current: dict[str, str]) -> list[tuple]:
@@ -192,6 +194,7 @@ def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
         "QUALIFY row_number() OVER (PARTITION BY u.user_item_id, f.store "
         "ORDER BY coalesce(lower(f.brand) = lower(u.brand), false) DESC, f.item_id) <= 3",
         rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item} for u in items]),
+        fresh=True,
     )
     out: dict[str, list[tuple]] = {u.user_item_id: [] for u in items}
     for x in rows:
