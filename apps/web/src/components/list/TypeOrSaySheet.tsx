@@ -190,9 +190,10 @@ export function TypeOrSaySheet({
                 }
               }}
               placeholder="e.g. a 4 L jug of 2% milk"
+              aria-label="What do you want to add?"
               rows={3}
               disabled={step !== "idle"}
-              className="min-h-[108px] w-full resize-none rounded-2xl border border-separator bg-elevated p-4 text-[17px] text-label shadow-card outline-none placeholder:text-label-2/70"
+              className="min-h-[108px] w-full resize-none rounded-2xl border border-separator bg-elevated p-4 text-[17px] text-label shadow-card outline-none placeholder:text-label-2/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
             />
 
             <div className="flex flex-col items-center gap-4">
