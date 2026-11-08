@@ -26,7 +26,7 @@ _ROWS = [  # store, brand, item, variant, size text, price
     ("Save-On-Foods", "Dairyland", "milk", "chocolate", "4 L", 6.99),
     ("Safeway", "Dairyland", "milk", "2%", "4 L", 5.99),
     ("Safeway", "Lucerne", "milk", "2%", "4 L", 5.49),
-    ("Real Canadian Superstore", "Dairyland", "milk", "2 x 1.89 L", 6.79),
+    ("Real Canadian Superstore", "Dairyland", "milk", "2%", "2 x 1.89 L", 6.79),
     ("No Frills", "Dairyland", "milk", "1%", "4 L", 5.29),
     ("Save-On-Foods", "Western Family", "eggs", "large", "12 ea", 4.99),
     ("No Frills", "No Name", "eggs", "large", "12 ea", 3.99),

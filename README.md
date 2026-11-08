@@ -72,31 +72,23 @@ Real flyer data comes from [Flipp](https://flipp.com)'s public, unauthenticated 
 | --- | --- |
 | `GET /flyers?locale=en-ca&postal_code=<postal>` | This week's flyers for a postal code; filtered to the merchant + a `categories_csv` containing "Groceries" (a merchant can run non-grocery flyers too, e.g. Superstore's Toy Book) |
 | `GET /flyers/{id}?locale=en-ca` | A flyer's item list + pages. `pages[]` carries no image URL (confirmed live on five flyers) |
-| `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (the full flyer page this item sits on) |
-| `GET /items/search?locale=en-ca&postal_code=<postal>&q=<q>` | Cross-merchant search, used only by the optional live-match fallback below |
+| `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (a product photo, not the page) |
 
 `to_extracted_item()` parses an item (+ detail) into the same `ExtractedItem` shape every other extraction
 mode returns, reading size from `description` first and falling back to parsing it out of the product name;
 rows with no price anywhere are skipped. `fetch_grocery_flyer()` only spends the extra `/items/{id}` call when
 the list data alone didn't already give a price and a parseable size.
 
-**Fetchers** (`databricks/fetchers/<store>.py`) call `shared.flipp.fetch_grocery_flyer()` and upload page images
-(when Flipp has any — today it doesn't) plus a `flyers/<store>/<week_start>/flipp_items.json` sidecar of
-structured rows to the Volume. The `--from-dir` hand-screenshot fallback is unchanged.
+**Fetcher** (`databricks/fetchers/flipp.py`, all five stores) writes `flyers/<store>/<week_start>/flipp.jsonl`
+to the Volume with each item's exact tile box, page, price and valid dates; the pipeline turns it into
+`flyer_items` (see `docs/plan.md`, WS1 step 6). Page images saved by hand still go through
+`databricks/fetchers/common.py <store> <dir>`.
 
 **Mock mode with real prices**: `make flipp-snapshot` (`apps/api/snapshot_flipp.py`) saves all five stores'
 current flyers to `apps/api/data/flipp_snapshot.json`. `apps/api/mock_data.py` loads it if present, falling
 back to the small canned list otherwise — the API never touches the network for this at request time; refresh
 the snapshot by hand whenever you want fresher demo prices.
 
-**Fallback loader**: `databricks/setup/load_flipp_items.py` writes `flipp_items.json` rows straight into
-`realdeal.core.flyer_items`, for when `ai_query` misses the 85% accuracy bar (or hasn't run yet). Read its
-docstring before using it — `flyer_items` is a Lakeflow Declarative Pipeline streaming table, not a plain
-managed table, so there's a real caveat about writing into it directly.
-
-**Accuracy check**: `databricks/setup/golden_check.py --week YYYY-MM-DD` fuzzy-matches `ai_query`'s
-`flyer_items` rows against the Flipp ground truth for the same store/week and prints field accuracy —
-the 13:00 Sat go/no-go number.
 
 **Optional live match fallback**: if AI Search and the SQL `LIKE` fallback both come up empty for a saved
 item, `apps/api/store.py` tries one cached (1 h) Flipp search and scores results with the usual
