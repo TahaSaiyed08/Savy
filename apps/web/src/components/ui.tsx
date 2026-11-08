@@ -4,10 +4,13 @@
 import { useId, type ReactNode } from "react";
 import { Loader, Search } from "@/components/icons";
 
-export function LargeTitle({ title, action }: { title: string; action?: ReactNode }) {
+export function LargeTitle({ title, leading, action }: { title: string; leading?: ReactNode; action?: ReactNode }) {
   return (
     <header className="flex items-end justify-between px-4 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-2">
-      <h1 className="text-[2.125rem] leading-tight font-bold tracking-tight">{title}</h1>
+      <div className="flex items-center gap-2">
+        {leading}
+        <h1 className="text-[2.125rem] leading-tight font-bold tracking-tight">{title}</h1>
+      </div>
       {action}
     </header>
   );
