@@ -1,5 +1,6 @@
 "use client";
 import { money } from "@/components/ui";
+import { Tag } from "@/components/icons";
 import { productImage } from "@/lib/products";
 import type { Schemas } from "@/lib/api";
 
@@ -31,7 +32,9 @@ export function DealCard({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl border border-separator bg-elevated text-left shadow-card"
+      className={`flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl border bg-elevated text-left shadow-card transition-[transform,box-shadow] active:scale-[0.97] ${
+        isCheapest ? "border-tint/50 shadow-tint" : "border-separator"
+      }`}
     >
       <div className="relative size-[150px] bg-elevated">
         {img ? (
@@ -52,8 +55,9 @@ export function DealCard({
         <p className="truncate text-[13px] text-label-2">{deal.flyer_label}</p>
         {deal.match_score < 1 && <p className="text-[13px] text-label-2">Probable match</p>}
         {badge && (
-          <div className="rounded-lg border border-savings-border bg-savings-bg px-1.5 py-1">
-            <p className="text-[13px] font-medium text-savings-text">{badge}</p>
+          <div className="flex items-center gap-1 rounded-lg border border-savings-border bg-savings-bg px-1.5 py-1">
+            <Tag size={12} className="shrink-0 text-savings-text" />
+            <p className="truncate text-[13px] font-medium text-savings-text">{badge}</p>
           </div>
         )}
       </div>

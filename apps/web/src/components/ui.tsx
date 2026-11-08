@@ -119,7 +119,7 @@ export function EmptyState({
   onSecondary?: () => void;
 }) {
   return (
-    <div className="flex min-h-[28rem] flex-col items-center justify-center gap-6 px-8 text-center">
+    <div className="flex min-h-[28rem] flex-col items-center justify-center gap-6 px-8 text-center [animation:fade-slide-up_320ms_ease-out] motion-reduce:[animation:none]">
       <div className="text-tint">{icon}</div>
       <div className="flex flex-col items-center gap-2">
         <p className="text-[17px] font-semibold">{title}</p>
