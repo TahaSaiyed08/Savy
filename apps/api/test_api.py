@@ -504,6 +504,7 @@ def test_bad_extractor_config_fails_at_startup(monkeypatch):
 def test_health_reports_extractor(monkeypatch):
     monkeypatch.delenv("EXTRACTOR", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert c.get("/health").json()["extractor"] == "MockExtractor"
 
 
