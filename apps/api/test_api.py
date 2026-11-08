@@ -94,6 +94,37 @@ def test_save_survives_matching_failure(monkeypatch):
     assert len(saved) == 1 and any("INSERT INTO user_items" in s for s in writes)
 
 
+def test_save_uses_a_fixed_number_of_statements(monkeypatch):
+    import json
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import SaveItems
+
+    writes, reads = [], []
+
+    def no_index():
+        raise RuntimeError("no AI Search index")
+
+    def like(sql, rows):
+        reads.append(sql)
+        return [{"user_item_id": r["user_item_id"], "item_id": f"f-{r['item']}", "brand": "Purex"}
+                for r in json.loads(rows)]
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
+    monkeypatch.setattr(databricks_sql, "query", like)
+    monkeypatch.setattr(databricks_sql, "_client", no_index)
+    items = [{"item": f"thing {n}", "confidence": 0.9} for n in range(9)] + [
+        {"brand": "PC", "item": "bathroom tissue", "confidence": 0.9}]
+    store.add_items(uuid.uuid4(), SaveItems(source="receipt", items=items))
+
+    assert len(reads) == 1 and len(writes) == 3  # users MERGE, user_items INSERT, user_item_matches INSERT
+    inserted = json.loads(next(p["rows"] for s, p in writes if "INSERT INTO user_items" in s))
+    assert len(inserted) == 10 and inserted[0]["added_at"]
+    matches = json.loads(next(p["rows"] for s, p in writes if "user_item_matches" in s))
+    assert len(matches) == 9  # the PC item is dropped by the brand rule (flyer brand is Purex)
+
+
 def test_unknown_extractor_is_rejected(monkeypatch):
     monkeypatch.setenv("EXTRACTOR", "gpt")
     with pytest.raises(ValueError, match="mock, claude, databricks"):

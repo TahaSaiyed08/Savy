@@ -1,7 +1,9 @@
 """Data access. REALDEAL_MOCK=1 (the default without DATABRICKS_HOST) keeps everything in memory."""
+import json
 import logging
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -12,6 +14,11 @@ from apps.api.models import Deal, SaveItems, UserItem
 log = logging.getLogger(__name__)
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
 INDEX = "realdeal.core.flyer_items_idx"
+# Batches travel as one JSON string parameter and are expanded with inline(from_json(...)) in SQL.
+_ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
+              "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>")
+_MATCH_ROWS = "ARRAY<STRUCT<user_item_id: STRING, flyer_item_id: STRING, match_score: DOUBLE>>"
+_LIKE_ROWS = "ARRAY<STRUCT<user_item_id: STRING, brand: STRING, item: STRING>>"
 
 
 def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **fields) -> UserItem:
@@ -33,8 +40,31 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
 # --- databricks -----------------------------------------------------------
 
 
-def _match_and_store(u: UserItem) -> None:
-    """Top-3 from AI Search, brand rule + threshold, written to user_item_matches (read by my_deals)."""
+def _match_and_store(items: list[UserItem]) -> None:
+    """Top-3 per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
+
+    Matches land in user_item_matches, which my_deals reads.
+    """
+    from apps.api import databricks_sql as db
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        found = dict(zip((u.user_item_id for u in items), pool.map(_search, items), strict=True))
+    missed = [u for u in items if found[u.user_item_id] is None]
+    if missed:
+        found.update(_like_fallback(missed))
+    matches = [
+        {"user_item_id": u.user_item_id, "flyer_item_id": item_id, "match_score": float(score)}
+        for u in items for item_id, brand, score in found.get(u.user_item_id) or []
+        if float(score) >= logic.MATCH_THRESHOLD and not (u.brand and (brand or "").lower() != u.brand.lower())
+    ]
+    if matches:
+        db.execute(
+            "INSERT INTO user_item_matches SELECT user_item_id, flyer_item_id, match_score, current_timestamp() "
+            f"FROM (SELECT inline(from_json(:rows, '{_MATCH_ROWS}')))", rows=json.dumps(matches))
+
+
+def _search(u: UserItem) -> list[tuple] | None:
+    """AI Search top-3 as (item_id, brand, score), or None if the index is unavailable."""
     from apps.api import databricks_sql as db
 
     try:
@@ -42,19 +72,29 @@ def _match_and_store(u: UserItem) -> None:
             index_name=INDEX, columns=["item_id", "brand", "item", "variant"],
             query_text=logic.label(u), num_results=3,
         )
-        rows = [(row[0], row[1], row[-1]) for row in (r.result.data_array or [])]  # score is last
-    except Exception:
-        log.warning("AI Search unavailable, falling back to LIKE", exc_info=True)
-        rows = [(x["item_id"], x["brand"], 0.75) for x in db.query(
-            "SELECT item_id, brand FROM flyer_items WHERE week_start = (SELECT max(week_start) FROM flyer_items)"
-            " AND lower(item) LIKE concat('%', lower(:item), '%') LIMIT 3", item=u.item)]
-    for item_id, brand, score in rows:
-        if float(score) < logic.MATCH_THRESHOLD or (u.brand and (brand or "").lower() != u.brand.lower()):
-            continue
-        db.execute(
-            "INSERT INTO user_item_matches VALUES (:user_item_id, :flyer_item_id, :score, current_timestamp())",
-            user_item_id=u.user_item_id, flyer_item_id=item_id, score=float(score),
-        )
+    except Exception as e:
+        log.warning("AI Search unavailable, falling back to LIKE: %s", e)
+        return None
+    return [(row[0], row[1], row[-1]) for row in (r.result.data_array or [])]  # score is last
+
+
+def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
+    """One query for all items: top-3 this-week flyer items containing the item name, same brand ranked first."""
+    from apps.api import databricks_sql as db
+
+    rows = db.query(
+        f"WITH u AS (SELECT inline(from_json(:rows, '{_LIKE_ROWS}'))) "
+        "SELECT u.user_item_id, f.item_id, f.brand FROM u JOIN flyer_items f "
+        "ON f.week_start = (SELECT max(week_start) FROM flyer_items) "
+        "AND lower(f.item) LIKE concat('%', lower(u.item), '%') "
+        "QUALIFY row_number() OVER (PARTITION BY u.user_item_id "
+        "ORDER BY coalesce(lower(f.brand) = lower(u.brand), false) DESC, f.item_id) <= 3",
+        rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item} for u in items]),
+    )
+    out: dict[str, list[tuple]] = {u.user_item_id: [] for u in items}
+    for x in rows:
+        out[x["user_item_id"]].append((x["item_id"], x["brand"], 0.75))
+    return out
 
 
 # --- interface used by main.py ---------------------------------------------
@@ -79,19 +119,27 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
         return new
     from apps.api import databricks_sql as db
 
-    db.execute("MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
-               "WHEN NOT MATCHED THEN INSERT (user_id, created_at) VALUES (s.user_id, current_timestamp())",
-               user_id=str(user_id))
-    for u in new:  # ponytail: one INSERT per item; batch it if receipts get long
-        db.execute(
-            "INSERT INTO user_items VALUES (:user_item_id, :user_id, :brand, :item, :variant, :size_qty, "
-            ":size_unit, :source, :added_at, :last_bought_at)",
-            **{**u.model_dump(), "user_id": str(u.user_id)},
-        )
+    rows = json.dumps([{**u.model_dump(mode="json"), "user_id": str(u.user_id)} for u in new])
+    # Fixed statement count however many items, and the three independent ones run concurrently.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        writes = [
+            pool.submit(db.execute,
+                        "MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
+                        "WHEN NOT MATCHED THEN INSERT (user_id, created_at) VALUES (s.user_id, current_timestamp())",
+                        user_id=str(user_id)),
+            pool.submit(db.execute,
+                        "INSERT INTO user_items (user_item_id, user_id, brand, item, variant, size_qty, size_unit, "
+                        "source, added_at, last_bought_at) SELECT user_item_id, user_id, brand, item, variant, "
+                        "size_qty, size_unit, source, CAST(added_at AS TIMESTAMP), CAST(last_bought_at AS TIMESTAMP) "
+                        f"FROM (SELECT inline(from_json(:rows, '{_ITEM_ROWS}')))", rows=rows),
+        ]
+        matching = pool.submit(_match_and_store, new)
+        for w in writes:
+            w.result()  # a failed write must surface
         try:
-            _match_and_store(u)
-        except Exception:  # the item is saved; it shows "no deal" until the weekly re-match
-            log.warning("matching failed for %s; saved without matches", u.user_item_id, exc_info=True)
+            matching.result()
+        except Exception:  # the items are saved; they show "no deal" until the weekly re-match
+            log.warning("matching failed; saved %d items without matches", len(new), exc_info=True)
     return new
 
 
