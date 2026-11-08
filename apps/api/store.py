@@ -17,9 +17,14 @@ from apps.api.mock_data import FLYER_ITEMS, seed_items
 from apps.api.models import Extraction, FlyerItem, ItemPatch, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
+# Two backends behind one set of functions. MOCK keeps the person's list in this process's memory (lost on restart,
+# fine for demos and tests); the other mode reads and writes Databricks tables through the SQL warehouse. main.py
+# never needs to know which one it is talking to. Without DATABRICKS_HOST, MOCK is on by default.
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
+# Where receipt photos are kept in Databricks (a Unity Catalog Volume), one folder per user.
 UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+# The only item columns a client may change. Anything else in a PATCH is ignored rather than written.
 _EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
 
 # Every statement is a fixed literal; all values travel as named parameters. Per-item writes are scoped to their
@@ -63,11 +68,13 @@ def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **f
 
 
 # --- mock -----------------------------------------------------------------
-# ponytail: process memory, lost on restart; fine for mock mode only.
+# One list per user id, created the first time that user is seen. ponytail: process memory, lost on restart; fine for mock mode only.
 _items: dict[UUID, list[UserItem]] = {}
 
 
 def _mock_items(user_id: UUID, postal: str | None = None) -> list[UserItem]:
+    # A new user starts with a few pantry items picked from this week's real flyers, so the app has something to show
+    # (and match) on first open instead of an empty screen.
     if user_id not in _items:
         try:
             seeds = seed_items(flyer_items(postal))
@@ -79,6 +86,8 @@ def _mock_items(user_id: UUID, postal: str | None = None) -> list[UserItem]:
 
 
 # --- flyers (both modes) ----------------------------------------------------
+# Databricks mode only: the flyer table is read at most once every 10 minutes and shared by all requests. (Mock mode
+# has its own, richer freshness logic in flyers_live.)
 FLYER_TTL = 600.0  # flyers change weekly; every list read matches against this in-process copy
 FLYER_RETRY = 60.0  # after a failed refresh, keep serving the old copy and try again this soon
 _flyer_cache: tuple[float, list[FlyerItem]] = (float("-inf"), [])  # -inf: monotonic() can be < TTL after boot
@@ -92,6 +101,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
     FLYER_ITEMS when live flyers are off. Databricks mode reads the table, which has no postal code.
     Raises only if the very first load fails; after that a failed refresh keeps the previous copy (logged).
     """
+    # Three sources: live Flipp feeds, the canned demo flyers, or the Databricks table. Callers just get a list.
     global _flyer_cache
     if MOCK:
         return flyers_live.items(postal or flyers_live.DEFAULT_POSTAL) if flyers_live.ENABLED else FLYER_ITEMS
@@ -112,6 +122,7 @@ def flyer_items(postal: str | None = None) -> list[FlyerItem]:
                         exc_info=True)
             _flyer_cache = (time.monotonic() - FLYER_TTL + FLYER_RETRY, items)
             return items
+        # Rows that don't fit the model are dropped and counted, never allowed to fail the whole load.
         today, fresh, bad = date.today(), [], 0
         for r in rows:
             try:
