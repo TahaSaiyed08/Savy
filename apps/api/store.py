@@ -66,10 +66,13 @@ def _match_and_store(items: list[UserItem]) -> None:
         if float(score) >= logic.MATCH_THRESHOLD and not (u.brand and (brand or "").lower() != u.brand.lower())
     ]
     if matches:
-        db.execute(  # idempotent, so a retry after a partial or timed-out attempt can't duplicate rows
-            "INSERT INTO user_item_matches SELECT s.user_item_id, s.flyer_item_id, s.match_score, current_timestamp() "
-            f"FROM (SELECT inline(from_json(:rows, '{_MATCH_ROWS}'))) s WHERE NOT EXISTS (SELECT 1 FROM "
-            "user_item_matches m WHERE m.user_item_id = s.user_item_id AND m.flyer_item_id = s.flyer_item_id)",
+        # One atomic MERGE, not check-then-insert: Delta's optimistic concurrency fails one of two concurrent
+        # MERGEs that would insert the same pair (the failure takes the normal retry path), so no duplicates.
+        db.execute(
+            f"MERGE INTO user_item_matches t USING (SELECT DISTINCT * FROM (SELECT inline(from_json(:rows, "
+            f"'{_MATCH_ROWS}')))) s ON t.user_item_id = s.user_item_id AND t.flyer_item_id = s.flyer_item_id "
+            "WHEN NOT MATCHED THEN INSERT (user_item_id, flyer_item_id, match_score, matched_at) "
+            "VALUES (s.user_item_id, s.flyer_item_id, s.match_score, current_timestamp())",
             rows=json.dumps(matches))
 
 
@@ -102,35 +105,40 @@ def _retry_rematch(user_id: UUID) -> None:
 
 
 # Weekly re-match (plan WS2 step 8). main.py polls this every REMATCH_EVERY_SECONDS. It does real work only when
-# some store's current flyer week changed since the last sweep, or on the first poll after a restart (which also
-# covers items whose in-memory retry was lost). It re-matches every item, because an item already matched at one
-# store still needs matching against another store's new flyer; the idempotent INSERT keeps that duplicate-free.
+# some store's current flyer changed since the last sweep, or on the first poll after a restart (which also covers
+# items whose in-memory retry was lost). "Changed" includes more pages or corrected rows for the same week, not just
+# a new week. It re-matches every item, because an item already matched at one store still needs matching against
+# another store's new rows; the MERGE in _match_and_store keeps that duplicate-free.
 REMATCH_BATCH = 100
-_swept_weeks: str | None = None
+_swept_flyers: str | None = None
 # A store's current flyer is its own latest week_start: chains start flyers on different days.
 _CURRENT_FLYERS = "(SELECT * FROM flyer_items QUALIFY week_start = max(week_start) OVER (PARTITION BY store))"
+# Per store: week, row count and an order-independent hash (bit_xor can't overflow) of the matching-relevant columns.
+_FLYER_SIGNATURE = (
+    "SELECT concat_ws(',', sort_array(collect_list(sig))) AS sig FROM (SELECT concat(store, '=', "
+    "CAST(max(week_start) AS STRING), ':', count(*), ':', bit_xor(xxhash64(item_id, brand, item, variant, "
+    f"size_qty, size_unit, price, unit_price, unit))) AS sig FROM {_CURRENT_FLYERS} f GROUP BY store)")
 
 
 def rematch_if_new_week() -> int:
-    """Re-match every user item when any store's flyer week changes. Returns how many items were matched.
+    """Re-match every user item when any store's current flyer changes. Returns how many items were matched.
 
-    The weeks are only marked swept when every batch succeeds, so a failure is retried on the next poll.
+    The flyers are only marked swept when every batch succeeds, so a failure is retried on the next poll. The
+    signature is read before matching, so rows landing mid-sweep change it and trigger another sweep.
     """
-    global _swept_weeks
+    global _swept_flyers
     if MOCK:
         return 0
     from apps.api import databricks_sql as db
 
-    weeks = db.query(
-        "SELECT concat_ws(',', sort_array(collect_list(concat(store, '=', CAST(week AS STRING))))) AS weeks "
-        "FROM (SELECT store, max(week_start) AS week FROM flyer_items GROUP BY store)")[0]["weeks"]
-    if not weeks or weeks == _swept_weeks:
+    sig = db.query(_FLYER_SIGNATURE)[0]["sig"]
+    if not sig or sig == _swept_flyers:
         return 0
     items = [UserItem(**r) for r in db.query("SELECT * FROM user_items")]
     for i in range(0, len(items), REMATCH_BATCH):
         _match_and_store(items[i:i + REMATCH_BATCH])
-    _swept_weeks = weeks
-    log.info("re-matched %d items for flyer weeks %s", len(items), weeks)
+    _swept_flyers = sig
+    log.info("re-matched %d items for flyers %s", len(items), sig)
     return len(items)
 
 

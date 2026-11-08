@@ -226,23 +226,24 @@ def test_failed_matching_is_retried_on_next_deals(monkeypatch):
     store.list_deals(uid)
     inserted = [json.loads(p["rows"]) for s, p in writes if "user_item_matches" in s]
     assert inserted == [[{"user_item_id": saved[0].user_item_id, "flyer_item_id": "f1", "match_score": 0.75}]]
-    assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
+    assert uid not in store._unmatched and "MERGE INTO user_item_matches" in next(
+        s for s, _ in writes if "user_item_matches" in s)
 
 
-def test_weekly_rematch_sweeps_each_new_week_once(monkeypatch):
+def test_weekly_rematch_sweeps_each_flyer_change_once(monkeypatch):
     from datetime import UTC, datetime
 
     from apps.api import databricks_sql, store
 
-    state = {"weeks": "Save-On-Foods=2026-11-05", "fail": False}
+    state = {"sig": "Save-On-Foods=2026-11-05:276:-347", "fail": False}
     batches, item_reads = [], []
     items = [{"user_item_id": f"u{n}", "user_id": str(uuid.uuid4()), "item": "milk", "source": "manual",
               "added_at": datetime.now(UTC)} for n in range(250)]
 
     def query(sql, **p):
-        if "max(week_start)" in sql:
-            return [{"weeks": state["weeks"]}]
-        item_reads.append(state["weeks"])
+        if sql == store._FLYER_SIGNATURE:
+            return [{"sig": state["sig"]}]
+        item_reads.append(state["sig"])
         return items
 
     def match(batch):
@@ -251,19 +252,22 @@ def test_weekly_rematch_sweeps_each_new_week_once(monkeypatch):
         batches.append(len(batch))
 
     monkeypatch.setattr(store, "MOCK", False)
-    monkeypatch.setattr(store, "_swept_weeks", None)
+    monkeypatch.setattr(store, "_swept_flyers", None)
     monkeypatch.setattr(store, "_match_and_store", match)
     monkeypatch.setattr(databricks_sql, "query", query)
 
     assert store.rematch_if_new_week() == 250 and batches == [100, 100, 50]
-    assert store.rematch_if_new_week() == 0 and len(item_reads) == 1  # same weeks: no item scan
+    assert store.rematch_if_new_week() == 0 and len(item_reads) == 1  # unchanged flyers: no item scan
 
-    state.update(weeks="PriceSmart=2026-11-07,Save-On-Foods=2026-11-05", fail=True)  # one store's new flyer
+    state["sig"] = "Save-On-Foods=2026-11-05:290:812"  # same week, later pages arrived
+    assert store.rematch_if_new_week() == 250 and len(item_reads) == 2
+
+    state.update(sig="PriceSmart=2026-11-07:40:5,Save-On-Foods=2026-11-05:290:812", fail=True)  # new store flyer
     with pytest.raises(RuntimeError):
         store.rematch_if_new_week()
     state["fail"] = False
     assert store.rematch_if_new_week() == 250  # the failed sweep is retried, not marked done
-    assert len(item_reads) == 3
+    assert len(item_reads) == 4
 
 
 def test_search_keeps_only_current_flyers_top_three_per_store(monkeypatch):

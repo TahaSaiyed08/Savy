@@ -14,7 +14,10 @@ SELECT
   f.unit_price,
   m.match_score,
   median(f.unit_price) OVER (PARTITION BY m.user_item_id) - f.unit_price AS savings_vs_median
-FROM user_item_matches m
+FROM (
+  -- One row per (user item, flyer item) even if duplicates were ever stored, so they can't skew the median.
+  SELECT user_item_id, flyer_item_id, max(match_score) AS match_score FROM user_item_matches GROUP BY ALL
+) m
 JOIN user_items u USING (user_item_id)
 JOIN (SELECT * FROM flyer_items QUALIFY week_start = max(week_start) OVER (PARTITION BY store)) f
   ON f.item_id = m.flyer_item_id
