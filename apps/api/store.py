@@ -68,7 +68,8 @@ def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **f
 
 
 # --- mock -----------------------------------------------------------------
-# One list per user id, created the first time that user is seen. ponytail: process memory, lost on restart; fine for mock mode only.
+# One list per user id, created the first time that user is seen.
+# ponytail: process memory, lost on restart; fine for mock mode only.
 _items: dict[UUID, list[UserItem]] = {}
 
 
