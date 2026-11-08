@@ -8,8 +8,11 @@ import uuid
 
 TITLE = "Real Deal: this week's grocery deals"
 DESCRIPTION = "Ask about this week's grocery flyer prices near a postal code: cheapest items, stores, discounts."
+# Genie is only allowed to read these two tables (kept in sync by apps/api/databricks_sync.py).
 TABLES = ["realdeal.core.live_listings", "realdeal.core.price_history"]
 
+# Plain-language rules Genie follows when it writes SQL. Each one fixes a mistake seen in real answers: comparing unit
+# prices across different units, matching "egg" inside "eggplant", or writing a regex Spark reads as nothing.
 INSTRUCTIONS = [
     "Every row belongs to a postal code. Only use rows where postal matches the shopper's postal code, which comes "
     "at the start of each question.",
@@ -38,6 +41,7 @@ INSTRUCTIONS = [
     "for more.",
 ]
 
+# Shown as clickable starters in the Genie space itself.
 SAMPLE_QUESTIONS = [
     "What's the cheapest milk this week?",
     "Which store has the cheapest eggs?",
@@ -47,6 +51,8 @@ SAMPLE_QUESTIONS = [
     "Compare bread prices at Safeway and No Frills",
 ]
 
+# Worked examples: a question with the SQL we want for it. Genie imitates their style, so they use the same whole-word
+# matching, the same unit rules and a sensible LIMIT. The first three are also the space's benchmark questions.
 _COLS = "store, brand, item, variant, size_qty, size_unit, price, round(unit_price, 3) AS unit_price, unit"
 EXAMPLES = [
     ("What's the cheapest milk this week?",
@@ -76,6 +82,8 @@ EXAMPLES = [
 ]
 
 
+# The space is described to Genie as one JSON document. These helpers shape the bits it is picky about: text goes in
+# as a list of lines each ending in a newline, and every list must be sorted by a unique id.
 def _lines(text: str) -> list[str]:
     return [line + "\n" for line in text.split("\n")]
 
@@ -89,6 +97,7 @@ def _by_id(items: list[dict]) -> list[dict]:
 
 
 def build() -> str:
+    # Called by create_genie_space.py both to create the space and to update it in place when this file changes.
     """The space as the JSON string Genie's create and update calls take (the format its own get call returns)."""
     return json.dumps({
         "version": 2,
