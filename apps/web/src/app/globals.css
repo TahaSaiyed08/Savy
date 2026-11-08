@@ -12,6 +12,15 @@
   --destructive: #ff3b30;
   --tap: 2.75rem; /* 44pt at default text size; scales with Dynamic Type */
   --motion: 180ms; /* HIG: transitions under 200ms */
+
+  /* Intake confirm: low-confidence items flagged for review (systemOrange family). */
+  --warning-bg: #fff7e8;
+  --warning-border: #fed7aa;
+  --warning-text: #9a3412;
+  /* Deal savings badges, "exact match" accents. */
+  --savings-bg: #ecfdf5;
+  --savings-border: #a7f3d0;
+  --savings-text: #166534;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,7 +32,47 @@
     --separator: rgb(84 84 88 / 0.6);
     --tint: #30d158;
     --destructive: #ff453a;
+    --warning-bg: rgb(255 159 10 / 0.12);
+    --warning-border: rgb(255 159 10 / 0.3);
+    --warning-text: #ff9f0a;
+    --savings-bg: #13351d;
+    --savings-border: transparent;
+    --savings-text: #30d158;
   }
+}
+
+/* Dev-only state gallery: manual theme override independent of the OS setting. */
+:root[data-force-theme="dark"] {
+  --bg: #000000;
+  --elevated: #1c1c1e;
+  --label: #ffffff;
+  --label-2: rgb(235 235 245 / 0.6);
+  --separator: rgb(84 84 88 / 0.6);
+  --tint: #30d158;
+  --destructive: #ff453a;
+  --warning-bg: rgb(255 159 10 / 0.12);
+  --warning-border: rgb(255 159 10 / 0.3);
+  --warning-text: #ff9f0a;
+  --savings-bg: #13351d;
+  --savings-border: transparent;
+  --savings-text: #30d158;
+  color-scheme: dark;
+}
+:root[data-force-theme="light"] {
+  --bg: #f2f2f7;
+  --elevated: #ffffff;
+  --label: #000000;
+  --label-2: rgb(60 60 67 / 0.6);
+  --separator: rgb(60 60 67 / 0.29);
+  --tint: #248a3d;
+  --destructive: #ff3b30;
+  --warning-bg: #fff7e8;
+  --warning-border: #fed7aa;
+  --warning-text: #9a3412;
+  --savings-bg: #ecfdf5;
+  --savings-border: #a7f3d0;
+  --savings-text: #166534;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -35,6 +84,12 @@
   --color-separator: var(--separator);
   --color-tint: var(--tint);
   --color-destructive: var(--destructive);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-warning-text: var(--warning-text);
+  --color-savings-bg: var(--savings-bg);
+  --color-savings-border: var(--savings-border);
+  --color-savings-text: var(--savings-text);
   --spacing-tap: var(--tap);
   --default-transition-duration: var(--motion);
 }
