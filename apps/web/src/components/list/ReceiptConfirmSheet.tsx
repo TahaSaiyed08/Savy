@@ -56,7 +56,7 @@ function SimilarDeal({ deal }: { deal: Similar | null }) {
   if (!deal) return null;
   const { cheapest } = deal;
   return (
-    <p className="truncate text-[13px] font-medium text-savings-text">
+    <p className="text-[13px] leading-snug font-medium text-savings-text">
       On sale: {fullName(deal)} · {money(cheapest.price)} at {cheapest.store}
     </p>
   );
@@ -132,9 +132,11 @@ export function ReceiptConfirmSheet({
   const chosenItems = items.filter((it, i) => it.confidence < CONFIRM_BELOW || selected.has(i));
   // Parsed with an explicit local time-of-day: a bare "2026-11-06" is parsed as UTC midnight, which
   // renders as the previous day in any timezone west of UTC (Vancouver included).
-  const date = extraction.bought_at
-    ? new Date(`${extraction.bought_at}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-    : undefined;
+  const when = extraction.bought_at ? new Date(`${extraction.bought_at.slice(0, 10)}T00:00:00`) : null;
+  const date =
+    when && !Number.isNaN(when.getTime())
+      ? when.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : undefined; // an unreadable date is left out rather than shown as "Invalid Date"
   const headerLine = [extraction.store, date, `${items.length} items`].filter(Boolean).join(" · ");
 
   return (

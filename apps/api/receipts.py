@@ -4,6 +4,8 @@ A receipt records what was bought, not what a flyer advertises: "3.14 lb apples"
 not a package size. Keeping it would make the item look like a specific 3.14 lb pack that no flyer sells, so fresh
 produce loses its size and quantity here. Packaged goods keep theirs: a 340 g bag of coffee really is a 340 g bag.
 """
+import re
+
 from apps.api import logic
 from apps.api.models import ExtractedItem, Extraction
 
@@ -51,3 +53,10 @@ def drop_produce_quantity(extraction: Extraction) -> Extraction:
     bare = {"size_qty": None, "size_unit": None}
     items = [i.model_copy(update=bare) if is_produce(i) else i for i in extraction.items]
     return extraction.model_copy(update={"items": items})
+
+
+def tidy(extraction: Extraction) -> Extraction:
+    """What /intake/receipt returns: produce without size, and a plain date. Some models answer with a date and time
+    ("2023-12-09T10:42:00") although the prompt asks for a date; the app (and the receipts table) want only the day."""
+    day = re.match(r"\d{4}-\d{2}-\d{2}", extraction.bought_at or "")
+    return drop_produce_quantity(extraction).model_copy(update={"bought_at": day[0] if day else None})

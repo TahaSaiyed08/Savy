@@ -78,3 +78,13 @@ def test_other_intake_paths_are_not_touched(client):
     assert r.status_code == 200
     (item,) = r.json()["extraction"]["items"]
     assert item["size_qty"] is not None  # a typed line keeps its quantity: only receipts change
+
+
+@pytest.mark.parametrize("said, kept", [
+    ("2023-12-09T10:42:00", "2023-12-09"), ("2026-11-06", "2026-11-06"), ("Nov 6, 2026", None), ("", None),
+    (None, None),
+])
+def test_a_receipt_date_is_only_the_day_or_nothing(said, kept):
+    got = receipts.tidy(Extraction(items=[_line("milk", 1, "l")], bought_at=said))
+    assert got.bought_at == kept
+    assert got.items[0].size_qty == 1  # packaged food still keeps its size
