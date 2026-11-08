@@ -280,15 +280,39 @@ def _voice():
     return c.post("/intake/voice", headers=H, files={"file": ("a.webm", io.BytesIO(b"x"), "audio/webm")})
 
 
-def test_speech_service_failure_is_a_502(monkeypatch):
+def _elevenlabs_replies(status=200, body=b'{"text": "milk"}', exc=None):
+    def post(url, **kw):
+        if exc:
+            raise exc
+        return httpx.Response(status, content=body, request=httpx.Request("POST", url))
+    return post
+
+
+@pytest.mark.parametrize("reply", [
+    _elevenlabs_replies(exc=httpx.ConnectError("ElevenLabs unreachable")),
+    _elevenlabs_replies(status=503, body=b'{"detail": "busy"}'),
+    _elevenlabs_replies(body=b"<html>not json</html>"),
+    _elevenlabs_replies(body=b'{"words": []}'),
+    _elevenlabs_replies(body=b'{"text": null}'),
+    _elevenlabs_replies(body=b'["milk"]'),
+], ids=["unreachable", "http-503", "invalid-json", "missing-text", "null-text", "not-an-object"])
+def test_speech_service_failures_are_a_logged_502(monkeypatch, caplog, reply):
     from apps.api import stt
 
-    def down(*a):
-        raise httpx.ConnectError("ElevenLabs unreachable")
-
-    monkeypatch.setattr(stt, "transcribe", down)
-    r = _voice()
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setattr(stt.httpx, "post", reply)
+    with caplog.at_level("WARNING", logger="apps.api.main"):
+        r = _voice()
     assert r.status_code == 502 and "Speech service" in r.json()["detail"]
+    assert any("speech-to-text failed" in m and H["X-User-Id"] in m for m in caplog.messages)
+
+
+def test_speech_service_transcript_is_returned(monkeypatch):
+    from apps.api import stt
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setattr(stt.httpx, "post", _elevenlabs_replies(body=b'{"text": "add eggs"}'))
+    assert _voice().json()["transcript"] == "add eggs"
 
 
 def test_silent_recording_skips_extraction(monkeypatch):

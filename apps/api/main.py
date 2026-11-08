@@ -1,5 +1,6 @@
 """Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
 import ipaddress
+import logging
 import os
 import time
 from collections import deque
@@ -8,12 +9,13 @@ from typing import Annotated
 from uuid import UUID
 
 import anthropic
-import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
 from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, Mode, SaveItems, UserItem
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -125,9 +127,12 @@ def intake_manual(user_id: UserId, body: ManualIntake, ext: Ext) -> IntakeRespon
 
 @app.post("/intake/voice", dependencies=[Depends(rate_limit)])
 def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
+    audio = _read(file, "audio/")
     try:
-        text = stt.transcribe(_read(file, "audio/"), file.filename or "audio.webm", file.content_type)
-    except httpx.HTTPError as e:
+        text = stt.transcribe(audio, file.filename or "audio.webm", file.content_type)
+    except stt.SpeechServiceError as e:
+        log.warning("speech-to-text failed for user %s (%s, %d bytes): %s",
+                    user_id, file.content_type, len(audio), e, exc_info=True)
         raise HTTPException(502, "Speech service error; try again or type the item") from e
     if not text.strip():  # silence: don't pay for an extraction that can only invent an item
         raise HTTPException(422, "Didn't catch that; try again")

@@ -136,7 +136,7 @@ export function TypeOrSaySheet({
       });
       ctl.done();
       if (error || !data) {
-        setErrorMsg(intakeErrorMessage(response));
+        setErrorMsg(intakeErrorMessage(response, "voice"));
         setStep("idle");
         return;
       }
