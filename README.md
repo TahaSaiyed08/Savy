@@ -4,12 +4,13 @@
 
 <p align="center">
   <b>Every grocery flyer near you, matched to what you actually buy, with the cheapest store for the whole basket.</b><br />
-  A mobile-first PWA built at HackCamp 2026 on <b>Databricks</b>, with <b>ElevenLabs</b> voice and a <b>Figma</b>-first design.
+  A mobile-first PWA built at HackCamp 2026 on <b>Databricks</b>, with <b>Gemini</b> and <b>ElevenLabs</b> in the intake, a <b>Figma</b>-first design, and <b>Freebuff</b> in our toolbox.
 </p>
 
 <p align="center">
   <a href="#see-it">See it</a> ·
   <a href="#how-it-works">How it works</a> ·
+  <a href="#prizes-were-going-for">Prizes</a> ·
   <a href="#built-with-our-sponsors">Sponsors</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#setup-every-teammate">Run it</a> ·
@@ -57,6 +58,20 @@ Real screenshots of the app running against this week's real flyers near V6T 1Z4
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
+## Prizes we're going for
+
+| Prize | Why it fits | Where to look |
+| --- | --- | --- |
+| **Best Use of Databricks** | Unity Catalog tables, a Lakeflow pipeline, the SQL Statement API, Genie, Model Serving, `ai_query`, Volumes and a Databricks App, all doing real work in the app. | [Databricks](#databricks-the-lakehouse-under-the-whole-app) |
+| **Best Design** | Designed in Figma first (18 screens), built to match, with light and dark themes, large tap targets and screen-reader support. | [Figma and design](#figma-designed-first-then-built) |
+| **Best Use of Gemini API** | Gemini reads receipts, product photos and typed lines into items, as a drop-in extractor beside Claude and `ai_query`. | [Gemini](#gemini-a-second-pair-of-eyes-for-receipts) |
+| **Community Impact** | Students on a food budget compare 30 to 40 pages of flyers by hand every week; Real Deal does it for them, free and with no account. | [Community impact](#community-impact) |
+| **Best Project Built with Freebuff** | Freebuff is one of the coding agents we built it with. | [Freebuff](#freebuff-our-coding-agent) |
+
+The Overall Winner and nwChoice awards need no opt-in.
+
+<p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
+
 ## Built with our sponsors
 
 ### Databricks: the lakehouse under the whole app
@@ -77,6 +92,22 @@ Real screenshots of the app running against this week's real flyers near V6T 1Z4
 | **Databricks App** | Hosts the API for the demo. | [`app.yaml`](app.yaml) |
 
 Nothing is written to your workspace unless you run `make databricks-setup` and set `REALDEAL_DATABRICKS_SYNC=1`.
+
+<p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
+
+### Gemini: a second pair of eyes for receipts
+
+<p align="center">
+  <img src="docs/assets/gemini.svg" width="100%" alt="Animated receipt being scanned, its lines turning into Milk, Eggs, Oats and Cheddar items" />
+</p>
+
+Adding what you buy starts with reading it, from a receipt photo, a product photo, or a line you typed. Gemini is a full extractor for all three, behind the same interface as Claude and `ai_query`, so switching is one setting: `EXTRACTOR=gemini` (or just set `GEMINI_API_KEY` and no Anthropic key).
+
+- **Structured by design.** Gemini is asked for JSON that matches our `Extraction` schema and the reply is validated against it, so a malformed answer becomes a clean "couldn't read that" instead of bad data in your list ([`GeminiExtractor`](apps/api/extractors.py)).
+- **Same prompts, same results.** It reuses the versioned receipt, product and typed-text prompts, so the confirm screens (including low-confidence flags) work unchanged.
+- **Safe to run.** The key travels in a header, never a URL; one retry on a busy response; every failure maps to the same 502 or 422 the other extractors use; and the file type is sniffed from the bytes, not trusted.
+- **Tested live and offline.** A receipt photo parsed to its store, total and 14 line items in about 17 seconds, and typed text and a product photo came back in a few seconds through the real `/intake` endpoints. 11 offline tests cover the request, retries, errors and selection ([`test_gemini.py`](apps/api/test_gemini.py)).
+- **Model:** `gemini-3.5-flash` by default; set `GEMINI_MODEL` to change it.
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
@@ -108,6 +139,26 @@ The app started as a Figma file: mobile frames for every tab, sheet and state, i
 - **Every state is reviewable.** A dev-only gallery at `/dev/states` renders each screen and state side by side (it is gated out of production builds).
 - **It kept growing in the same language.** The three-tab layout (Pantry, Basket, Flyers), Price Match with real flyer pages, and the Ask sheet came after the original frames and reuse their components ([`ui.tsx`](apps/web/src/components/ui.tsx), `Sheet`, `Chip`, `ItemEditor`).
 
+**For the Best Design prize**, here is what you can check in the app and the code:
+
+- **Designed in Figma first.** 18 mobile screens, then built to match. <!-- Add the Figma link here, and on Devpost: the prize requires it. -->
+- **Large, consistent tap targets.** A 44 pt minimum (`--tap`) on the main buttons and rows, from one token system.
+- **Light and dark, for real.** It follows the phone's setting and has a toggle that persists across tabs and reloads (there is a test for it).
+- **Screen-reader friendly.** Icon buttons have labels, and loading, errors, toasts and the Ask answer are announced through live regions.
+- **Calm motion.** The loading shimmer stops when the phone asks for reduced motion.
+- **Phone-aware layout.** Safe-area insets keep controls clear of notches and the home bar.
+- **Every state is reviewable.** `/dev/states` lays out each screen and state in one place (dev builds only).
+
+<p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
+
+### Freebuff: our coding agent
+
+<p align="center">
+  <img src="docs/assets/freebuff.svg" width="100%" alt="A terminal where a coding agent reads the repo, plans the change, edits the files and runs the tests" />
+</p>
+
+We used Freebuff as one of the coding agents we built Real Deal with at HackCamp, alongside Claude Code. <!-- Judges need specifics: add which parts Freebuff built or reviewed, and what it saved us. -->
+
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
 ### Devpost
@@ -121,6 +172,21 @@ HackCamp 2026, Databricks track. The Devpost page holds the story, what it is bu
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
+## Community impact
+
+**The problem.** Students on a food budget re-make the same decision every week: where to shop, and what is actually cheap. Today that means 30 to 40 pages of flyers across Flipp and store apps, none of which know what you buy or compare unit prices across stores.
+
+**What Real Deal changes.**
+
+- **It does the comparing.** You see deals only on the items you buy, the cheapest store for each, and for the whole basket, with prices compared per 100 g, per 100 ml or per item, so a bigger pack is judged fairly.
+- **It is free and open to anyone.** No account, no sign-up, nothing to install: it runs in a phone browser, for any Canadian postal code, on public flyer data.
+- **It meets people where they are.** Add items by saying them (hands-free) or snapping a receipt, and see the real flyer page, not a rewritten summary.
+- **It respects privacy.** There is no login; your postal code goes in a header, not a URL; and nothing is stored in the cloud unless you turn that on.
+
+**What we are honest about.** This is a hackathon prototype on an unofficial data source, so prices are only as good as the flyers, and we have not measured how much a shopper saves. The next step would be to test it with students for a few weeks and measure exactly that.
+
+<p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
+
 ## Architecture
 
 ```mermaid
@@ -129,7 +195,7 @@ flowchart LR
   Proxy --> API["FastAPI"]
   API -->|"this week's flyers"| Flipp[("Flipp API")]
   API -->|"voice"| Eleven["ElevenLabs Scribe"]
-  API -->|"receipts, photos, text"| Extract["Claude or ai_query"]
+  API -->|"receipts, photos, text"| Extract["Claude, Gemini or ai_query"]
   API -->|"SQL Statement API"| UC[("Databricks<br/>Unity Catalog")]
   UC --> Genie["Genie: Ask"]
   API -->|"product names"| Serving["Model Serving"]
@@ -182,14 +248,15 @@ The browser tests run with `npm --prefix apps/web run test:e2e`.
 | `DATABRICKS_HOST` | API, fetchers, setup scripts | API runs in mock mode |
 | `DATABRICKS_TOKEN` | same | |
 | `DATABRICKS_WAREHOUSE_ID` | API (SQL Statement API), sync, Genie | |
-| `ANTHROPIC_API_KEY` | API extractor (receipts, photos, typed text) | mock extractor |
+| `ANTHROPIC_API_KEY` | API extractor (receipts, photos, typed text) | no Claude extractor |
+| `GEMINI_API_KEY` | API extractor, used when `EXTRACTOR=gemini` or when it is the only key set | no Gemini extractor (with no key at all: the mock) |
 | `ELEVENLABS_API_KEY` | API voice proxy | canned transcript |
 | `DEFAULT_POSTAL_CODE` | API | `V6T1Z4`; used until the shopper sets their own |
 | `REALDEAL_DATABRICKS_SYNC` | API | off; `1` pushes every flyer refresh to Unity Catalog |
 | `GENIE_SPACE_ID` | API | read from `apps/api/data/genie_space.json` (`make databricks-setup` writes it) |
 
-Overrides: `REALDEAL_MOCK=0|1`, `REALDEAL_LIVE_FLYERS=0` (canned flyers only: tests and CI), `EXTRACTOR=mock|claude|databricks`,
-`ANTHROPIC_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
+Overrides: `REALDEAL_MOCK=0|1`, `REALDEAL_LIVE_FLYERS=0` (canned flyers only: tests and CI), `EXTRACTOR=mock|claude|gemini|databricks`,
+`ANTHROPIC_MODEL`, `GEMINI_MODEL`, `DATABRICKS_EXTRACT_MODEL`, `REALDEAL_AI_REFINE=0` (skip the AI product-name step), `REFINE_MODEL`,
 `ELEVENLABS_STT_MODEL`, `INTAKE_LIMIT_PER_HOUR`, `INTAKE_GLOBAL_LIMIT_PER_HOUR`, `ASK_LIMIT_PER_HOUR`, `API_URL` (web to API proxy target).
 `EXTRACTOR=databricks` extracts with `ai_query` on the SQL warehouse; it's opt-in because on the demo receipt it took ~25 s
 against Claude's ~12 s and misread some abbreviated lines with high confidence.
