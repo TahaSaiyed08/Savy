@@ -15,6 +15,9 @@ Mode = Literal["flyer_page", "receipt", "product", "manual"]
 Source = Literal["receipt", "photo", "manual", "voice", "flyer"]  # flyer: identity copied from a listing
 Field4 = Literal["brand", "item", "variant", "size"]
 # [x0, y0, x1, y1] as fractions of the page, origin top-left. Bad rows fail on load instead of losing the highlight.
+# Everything below is the API's contract: the web client's types are generated from these models, so a field added or
+# renamed here shows up in the app after `make gen-api`.
+#
 # Flipp hands some stores' links through an ad-click tracker, which lands on a generic page with Flipp's tags on it.
 _NOT_A_STORE = ("doubleclick.net", "googleadservices.com", "flipp.com", "wishabi.com", "wishabi.net")
 
@@ -29,7 +32,12 @@ def clean_store_url(raw: str | None) -> str | None:
     return f"https://{parts.netloc}{parts.path}"
 
 
+# A tile's rectangle on its flyer page, as fractions of the page (0 to 1) with the origin top-left, so it stays
+# correct at any zoom or image size. Four numbers: [left, top, right, bottom].
 BBox = Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)]
+
+
+# Intake: what a model (or the parser) reads out of a receipt, photo, voice note or typed line --------------------
 
 
 class ExtractedItem(BaseModel):
@@ -54,6 +62,9 @@ class Extraction(BaseModel):
 # --- realdeal.core tables -------------------------------------------------
 
 
+# The three flyer tables follow Databricks' bronze/silver/gold layering: raw pages in, parsed listings, weekly prices out.
+
+
 class FlyerPage(BaseModel):  # Bronze
     page_id: str
     store: str
@@ -64,6 +75,8 @@ class FlyerPage(BaseModel):  # Bronze
 
 
 class FlyerItem(BaseModel):  # Silver
+    """One advertised product on one flyer page: the unit everything else (matching, browsing, Genie) works on."""
+
     item_id: str
     page_id: str
     store: str
@@ -89,6 +102,8 @@ class FlyerItem(BaseModel):  # Silver
     store_url: str | None = None  # the store's own page for the item, when Flipp knows it
     category: str | None = None  # Dairy & eggs, Produce, ...: from the AI refiner, null until it has run
 
+    # Validators run on every construction, including rows loaded back from disk or Databricks, so old or odd data
+    # is cleaned at the boundary instead of being re-checked wherever it is used.
     @field_validator("store_url")
     @classmethod
     def _store_page_only(cls, v):  # also cleans rows saved to disk by an older parser
@@ -113,6 +128,8 @@ class User(BaseModel):
 
 
 class UserItem(BaseModel):
+    # An entry on the person's Pantry list: what they buy, not what a flyer advertises. Matching compares these four
+    # fields (brand, item, variant, size) against flyer listings.
     user_item_id: str
     user_id: UUID
     brand: str | None = None
