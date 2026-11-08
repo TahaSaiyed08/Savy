@@ -46,6 +46,27 @@ Four workstreams (Data/Pipeline, Backend, Frontend, Design & Pitch) are in [`doc
 ordered tasks, the interface it must not break, and its done-when. Put your GitHub handle on its `Owner:` line, branch
 as `ws<N>/<topic>`, and open small PRs to `main`. CI (pytest, ruff, eslint, tsc, build, OpenAPI drift) must pass.
 
+## Workstream 3: Frontend — status
+
+Done, on [`ws3/polish`](https://github.com/krish-arora-88/SurRealDeal/pull/3) (owner: [@TahaSaiyed08](https://github.com/TahaSaiyed08)):
+
+- Intake bottom sheet from My List: receipt photo, product photo, manual text, hold-to-talk voice
+  (`src/components/list/{AddMethodsSheet,ReceiptConfirmSheet,PickProductSheet,TypeOrSaySheet}.tsx`)
+- Confirm screens flag low-confidence rows (`confidence < 0.6`) for edit before `POST /items`; product photo
+  shows a chip picker over the extractor's candidates
+- Deals ("exact" vs "probable match" from `match_score`) and Basket (cheapest store, split-shop, dollar delta,
+  "no deal this week") tabs
+- Client-side image downscale (≤2000px, JPEG q0.8) before every upload; avoids the API's 413 and normalizes
+  iPhone HEIC
+- Error handling throughout: status-mapped upload errors (413/415/429 with `Retry-After`), a save-retry banner
+  instead of losing confirmed items on failure, optimistic delete with rollback, `AbortController` + 30s
+  timeout per intake call, revoked object URLs
+- Voice: aria-labelled hold-to-talk, empty-recording and unsupported-browser messages, a released-before-start
+  guard and stream cleanup on `MediaRecorder` failure
+- `/dev/states` (the reviewer-only screen gallery) is gated out of production builds
+- One Playwright smoke test (`apps/web/e2e/smoke.spec.ts`): opens the PWA, adds an item manually, confirms the
+  match in Deals — wired into CI alongside `pytest`/`ruff`/`eslint`/`tsc`/`next build`/`make check-api`
+
 ## Layout
 
 ```
