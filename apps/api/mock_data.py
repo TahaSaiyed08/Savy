@@ -60,11 +60,11 @@ def _items() -> list[FlyerItem]:
 
 FLYER_ITEMS = _items()
 
-# Every new device starts with these so My List and Basket are never empty in a demo.
+# Every new device starts with these, pre-moved into the Basket, so Pantry and Basket are never empty in a demo.
 SEED_ITEMS = [
     dict(brand="Dairyland", item="milk", variant="2%", size_qty=4, size_unit="l", in_basket=True),
     dict(brand="Western Family", item="eggs", variant="large", size_qty=12, size_unit="ea", in_basket=True),
-    dict(brand="Dole", item="banana", variant="organic", size_qty=2, size_unit="lb"),
+    dict(brand="Dole", item="banana", variant="organic", size_qty=2, size_unit="lb", in_basket=True),
     dict(brand="PC", item="chicken thigh", variant="boneless skinless", size_qty=1, size_unit="kg", in_basket=True),
-    dict(item="ramen"),  # incomplete: matches nothing until brand, variant and size are filled in
+    dict(item="ramen", in_basket=True),  # incomplete: matches nothing until brand, variant and size are filled in
 ]

@@ -24,6 +24,7 @@ from apps.api.models import (
     Mode,
     PageView,
     SaveItems,
+    SetBasket,
     Tile,
     UserItem,
 )
@@ -171,13 +172,20 @@ def save_items(user_id: UserId, body: SaveItems) -> list[ListItem]:
 
 @app.patch("/items/{user_item_id}")
 def update_item(user_id: UserId, user_item_id: str, body: ItemPatch) -> ListItem:
-    """Edit an item, or move it to (in_basket: true) or from (false) the Basket."""
+    """Edit an item (send brand/item/variant/size; extra ExtractedItem fields are ignored), or move it to/from the
+    Basket with in_basket. Only the fields sent are changed."""
     if "item" in body.model_fields_set and not body.item:
         raise HTTPException(422, "item can't be empty")
     item = store.update_item(user_id, user_item_id, body)
     if item is None:
         raise HTTPException(404, "no such item")
     return _listed([item])[0]
+
+
+@app.post("/items/{user_item_id}/basket")
+def set_item_basket(user_id: UserId, user_item_id: str, body: SetBasket) -> ListItem:
+    """Moves a Pantry item into (or out of) the Basket. Same as PATCH with only in_basket."""
+    return update_item(user_id, user_item_id, ItemPatch(in_basket=body.in_basket))
 
 
 @app.delete("/items/{user_item_id}", status_code=204)

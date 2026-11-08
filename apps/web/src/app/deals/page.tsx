@@ -34,7 +34,7 @@ export default function Deals() {
   return (
     <>
       <LargeTitle
-        title="Deals"
+        title="Add item(s)"
         action={
           validity ? (
             <span className="rounded-full border border-savings-border bg-savings-bg px-2.5 py-1.5 text-[13px] text-savings-text">{validity}</span>
@@ -58,16 +58,16 @@ export default function Deals() {
             ))}
           </div>
 
-          <div className="flex flex-col gap-6 pt-2 pb-8">
+          <div className="flex flex-col gap-3 pt-1 pb-6">
             {visibleGroups.map((g) => (
-              <div key={g.item} className="flex flex-col gap-3">
+              <div key={g.item} className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-3 px-4">
-                  <p className="flex-1 text-[15px] font-semibold">{g.item.toUpperCase()}</p>
-                  <p className="text-[13px] text-label-2">
+                  <p className="flex-1 text-[13px] font-semibold">{g.item.toUpperCase()}</p>
+                  <p className="text-[11px] text-label-2">
                     {g.sorted.length} store{g.sorted.length === 1 ? "" : "s"}
                   </p>
                 </div>
-                <div className="flex gap-3 overflow-x-auto px-4 pb-1">
+                <div className="flex gap-2 overflow-x-auto px-4 pb-1">
                   {g.visible.map((d) => (
                     <DealCard
                       key={d.flyer_item_id}

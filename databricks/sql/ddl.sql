@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS receipts (
   image_path STRING
 );
 
--- My List items the user moved to the Basket (what they're buying right now).
+-- Pantry items the user moved to the Basket (what they're buying right now). A table, not an in_basket column on
+-- user_items, so this file stays idempotent: CREATE TABLE IF NOT EXISTS skips existing tables and Databricks
+-- has no ADD COLUMN IF NOT EXISTS.
 CREATE TABLE IF NOT EXISTS basket_items (
   user_id      STRING    NOT NULL,
   user_item_id STRING    NOT NULL,

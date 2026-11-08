@@ -170,6 +170,10 @@ class ItemPatch(BaseModel):
     in_basket: bool | None = None
 
 
+class SetBasket(BaseModel):
+    in_basket: bool
+
+
 class Tile(BaseModel):
     item_id: str
     bbox: list[float]

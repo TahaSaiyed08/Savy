@@ -7,10 +7,13 @@ import { IntakeError, ReceiptLoading } from "@/components/list/ReceiptLoading";
 import { ReceiptConfirmSheet } from "@/components/list/ReceiptConfirmSheet";
 import { PickProductSheet } from "@/components/list/PickProductSheet";
 import { TypeOrSaySheet } from "@/components/list/TypeOrSaySheet";
+import { EditItemSheet } from "@/components/list/EditItemSheet";
 import { ListRow } from "@/components/list/ListRow";
+import { DealDetailSheet } from "@/components/deals/DealDetailSheet";
 import { api, withUser, type Schemas } from "@/lib/api";
 import { downscaleImage } from "@/lib/downscale";
 import { intakeController, intakeErrorMessage } from "@/lib/intake";
+import { useApi } from "@/lib/use-api";
 import { useItems } from "@/lib/use-items";
 
 type Flow =
@@ -29,16 +32,31 @@ type PendingSave = {
   boughtAt?: string | null;
 };
 
-export default function MyList() {
-  const { items, loading, error, deleteError, addItems, deleteItem, refetch } = useItems();
+export default function Pantry() {
+  const { items, loading, error, deleteError, addItems, deleteItem, setBasket, updateItem, refetch } = useItems();
+  // Loaded once so tapping a Pantry row can jump straight to that item's cheapest flyer match, without a
+  // network round trip per tap.
+  const { data: deals } = useApi(() => api.GET("/deals", { params: withUser() }));
   const [flow, setFlow] = useState<Flow>({ step: "closed" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | undefined>();
+  const [activeDeal, setActiveDeal] = useState<Schemas["Deal"] | null>(null);
+  const [editingItem, setEditingItem] = useState<Schemas["ListItem"] | null>(null);
   const receiptInput = useRef<HTMLInputElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | undefined>(undefined);
   const controllerRef = useRef<ReturnType<typeof intakeController> | null>(null);
   const pendingSaveRef = useRef<PendingSave | null>(null);
+
+  function openCheapestDeal(item: Schemas["ListItem"]) {
+    const matches = (deals ?? [])
+      .filter((d) => d.user_item_id === item.user_item_id)
+      .sort((a, b) => (a.unit_price ?? a.price ?? Infinity) - (b.unit_price ?? b.price ?? Infinity));
+    if (matches[0]) setActiveDeal(matches[0]);
+  }
+  const otherStoresForActiveDeal = activeDeal
+    ? (deals ?? []).filter((d) => d.item_label === activeDeal.item_label && d.flyer_item_id !== activeDeal.flyer_item_id)
+    : [];
 
   function releasePreview() {
     if (previewUrlRef.current) {
@@ -152,7 +170,7 @@ export default function MyList() {
   return (
     <>
       <LargeTitle
-        title="My List"
+        title="Pantry"
         action={
           <button
             type="button"
@@ -183,7 +201,14 @@ export default function MyList() {
       {!!items?.length && (
         <InsetGroup header={`${items.length} item${items.length === 1 ? "" : "s"}`}>
           {items.map((i) => (
-            <ListRow key={i.user_item_id} item={i} onDelete={() => deleteItem(i.user_item_id)} />
+            <ListRow
+              key={i.user_item_id}
+              item={i}
+              onTap={() => openCheapestDeal(i)}
+              onToggleBasket={() => setBasket(i.user_item_id, !i.in_basket)}
+              onEdit={() => setEditingItem(i)}
+              onDelete={() => deleteItem(i.user_item_id)}
+            />
           ))}
         </InsetGroup>
       )}
@@ -263,6 +288,14 @@ export default function MyList() {
           onAdd={(item, source) => saveItems([item], source)}
         />
       )}
+
+      <DealDetailSheet deal={activeDeal} others={otherStoresForActiveDeal} onClose={() => setActiveDeal(null)} />
+
+      <EditItemSheet
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={(fields) => updateItem(editingItem!.user_item_id, fields).then(() => {})}
+      />
     </>
   );
 }
