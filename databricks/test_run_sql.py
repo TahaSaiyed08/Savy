@@ -18,5 +18,4 @@ def test_splits_and_strips_comments_but_not_inside_strings():
 
 def test_real_files_parse():
     root = Path(__file__).parent / "sql"
-    assert len(statements((root / "views.sql").read_text())) == 1
     assert len(statements((root / "ddl.sql").read_text())) == 8  # catalog, schema, 2 volumes, 4 tables; USE dropped

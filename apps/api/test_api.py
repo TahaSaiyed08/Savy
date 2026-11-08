@@ -26,7 +26,11 @@ def test_requires_user_id():
 
 
 def test_mock_flow_end_to_end():
-    assert len(c.get("/items", headers=H).json()) == 5
+    items = c.get("/items", headers=H).json()
+    assert len(items) == 5
+    milk = next(i for i in items if i["item"] == "milk")
+    assert milk["in_basket"] and milk["cheapest"]["store"] == "Safeway"
+    assert next(i for i in items if i["item"] == "ramen")["missing"] == ["brand", "variant", "size"]
     deals = c.get("/deals", headers=H).json()
     assert {d["store"] for d in deals} >= {"No Frills", "Safeway"}
 
@@ -36,7 +40,45 @@ def test_mock_flow_end_to_end():
     assert len(saved) == 4 and len(c.get("/items", headers=H).json()) == 9
 
     b = c.get("/basket", headers=H).json()
-    assert b["cheapest_store"] and b["split_total"] > 0 and "ramen" in b["unmatched"]
+    assert b["cheapest_store"] and b["split_total"] > 0 and b["unmatched"] == []
+
+
+def test_edit_and_move_to_basket():
+    h = {"X-User-Id": str(uuid.uuid4())}
+    ramen = next(i for i in c.get("/items", headers=h).json() if i["item"] == "ramen")
+    url = f"/items/{ramen['user_item_id']}"
+    r = c.patch(url, headers=h, json={"brand": "Nissin", "item": "instant noodle", "variant": "spicy",
+                                      "size_qty": 500, "size_unit": "g"}).json()
+    assert r["missing"] == [] and r["cheapest"]["store"] == "T&T" and not r["in_basket"]
+    assert c.patch(url, headers=h, json={"in_basket": True}).json()["brand"] == "Nissin"  # other fields kept
+    basket = c.get("/basket", headers=h).json()
+    assert "Nissin instant noodle spicy 500 g" in [s["item_label"] for s in basket["split"]]
+    assert c.patch(url, headers=h, json={"item": ""}).status_code == 422
+    assert c.patch("/items/nope", headers=h, json={"in_basket": True}).status_code == 404
+    other = {"X-User-Id": str(uuid.uuid4())}
+    assert c.patch(url, headers=other, json={"in_basket": False}).status_code == 404
+
+
+def test_flyer_page_has_the_listing_tile_and_dates():
+    milk = next(i for i in c.get("/items", headers=H).json() if i["item"] == "milk")["cheapest"]
+    p = c.get(f"/flyer-pages/{milk['page_id']}").json()
+    tile = next(t for t in p["tiles"] if t["item_id"] == milk["flyer_item_id"])
+    assert tile["bbox"] == milk["bbox"] and p["store"] == "Safeway" and p["aspect"]
+    assert (p["valid_from"], p["valid_to"]) == ("2026-11-05", "2026-11-11") and p["image_url"] is None
+    assert c.get("/flyer-pages/nope").status_code == 404
+    assert c.get(f"/flyer-pages/{milk['page_id']}/image").status_code == 404  # mock pages are tiles only
+
+
+def test_volume_page_image_is_served(monkeypatch):
+    from apps.api import store
+
+    page = [logic.FlyerItem(item_id="f", page_id="p9", store="Save-On-Foods", week_start="2026-11-05", item="milk",
+                            bbox=[0, 0, 1, 1], image_path="/Volumes/realdeal/core/flyers/save_on_foods/x/009.jpg")]
+    monkeypatch.setattr(store, "page_tiles", lambda pid: page if pid == "p9" else [])
+    monkeypatch.setattr(store, "page_image", lambda path: b"\xff\xd8\xffjpeg")
+    assert c.get("/flyer-pages/p9").json()["image_url"] == "/flyer-pages/p9/image"
+    r = c.get("/flyer-pages/p9/image")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff")
 
 
 def test_delete_item_removes_it():
@@ -101,62 +143,55 @@ def test_heic_is_rejected_before_any_paid_call():
     assert e.value.status_code == 415 and not calls
 
 
-def test_save_survives_matching_failure(monkeypatch):
-    from apps.api import databricks_sql, store
-    from apps.api.models import SaveItems
-
-    writes, search_calls, fallback_calls = [], [], []
-
-    def search_down():
-        search_calls.append(1)
-        raise RuntimeError("AI Search index unavailable")
-
-    def fallback_down(sql, **p):
-        fallback_calls.append(sql)
-        raise RuntimeError("flyer_items unavailable")
-
-    monkeypatch.setattr(store, "MOCK", False)
-    monkeypatch.setattr(store, "_unmatched", {})
-    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(sql))
-    monkeypatch.setattr(databricks_sql, "query", fallback_down)
-    monkeypatch.setattr(databricks_sql, "_client", search_down)
-    uid = uuid.uuid4()
-    saved = store.add_items(uid, SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
-    assert len(saved) == 1 and any("INSERT INTO user_items" in s for s in writes)
-    assert search_calls, "matching never tried AI Search"
-    assert fallback_calls, "matching never tried the LIKE fallback"
-    assert store._unmatched[uid][1] == saved  # queued for retry
-
-
 def test_save_uses_a_fixed_number_of_statements(monkeypatch):
     import json
 
     from apps.api import databricks_sql, store
     from apps.api.models import SaveItems
 
-    writes, reads = [], []
-
-    def no_index():
-        raise RuntimeError("no AI Search index")
-
-    def like(sql, rows):
-        reads.append(sql)
-        return [{"user_item_id": r["user_item_id"], "item_id": f"f-{r['item']}", "brand": "Purex"}
-                for r in json.loads(rows)]
-
+    writes = []
     monkeypatch.setattr(store, "MOCK", False)
     monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
-    monkeypatch.setattr(databricks_sql, "query", like)
-    monkeypatch.setattr(databricks_sql, "_client", no_index)
-    items = [{"item": f"thing {n}", "confidence": 0.9} for n in range(9)] + [
-        {"brand": "PC", "item": "bathroom tissue", "confidence": 0.9}]
+    items = [{"item": f"thing {n}", "confidence": 0.9} for n in range(10)]
     store.add_items(uuid.uuid4(), SaveItems(source="receipt", items=items))
 
-    assert len(reads) == 1 and len(writes) == 3  # users MERGE, user_items INSERT, user_item_matches INSERT
+    assert len(writes) == 2  # users MERGE, user_items INSERT
     inserted = json.loads(next(p["rows"] for s, p in writes if "INSERT INTO user_items" in s))
-    assert len(inserted) == 10 and inserted[0]["added_at"]
-    matches = json.loads(next(p["rows"] for s, p in writes if "user_item_matches" in s))
-    assert len(matches) == 9  # the PC item is dropped by the brand rule (flyer brand is Purex)
+    assert len(inserted) == 10 and inserted[0]["added_at"] and "in_basket" not in inserted[0]
+
+
+def test_flyer_items_are_read_once_per_ttl(monkeypatch):
+    from apps.api import databricks_sql, store
+
+    reads = []
+    row = {"item_id": "f1", "page_id": "p1", "store": "Safeway", "week_start": "2026-11-05", "item": "milk",
+           "price": "5.99", "bbox": "[0.1,0.2,0.3,0.4]", "page_no": "3", "valid_to": "2026-11-11"}
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_flyer_cache", (0.0, []))
+    monkeypatch.setattr(databricks_sql, "query", lambda sql, **p: reads.append(sql) or [row])
+    first, second = store.flyer_items(), store.flyer_items()
+    assert len(reads) == 1 and first is second
+    assert first[0].bbox == [0.1, 0.2, 0.3, 0.4] and first[0].page_no == 3  # SQL API strings parsed
+    assert "current_date()" in reads[0]  # only listings still valid today
+
+
+def test_patch_and_basket_statements(monkeypatch):
+    from apps.api import databricks_sql, store
+    from apps.api.models import ItemPatch
+
+    writes = []
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "list_items", lambda uid: [])
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
+    uid = uuid.uuid4()
+    store.update_item(uid, "u1", ItemPatch(brand=None, size_qty=2, in_basket=True))
+    (update, up), (insert, _) = writes
+    assert update.startswith("UPDATE user_items SET") and up["brand"] is None and up["size_qty"] == 2
+    assert "variant" not in up  # fields not sent are left alone
+    assert "INSERT INTO basket_items" in insert and "NOT EXISTS" in insert
+    writes.clear()
+    store.update_item(uid, "u1", ItemPatch(in_basket=False))
+    assert len(writes) == 1 and writes[0][0].startswith("DELETE FROM basket_items")
 
 
 def test_receipt_photo_and_row_are_saved(monkeypatch):
@@ -188,45 +223,6 @@ def test_receipt_intake_saves_in_background(monkeypatch):
     monkeypatch.setattr(store, "save_receipt", lambda uid, image, x: saved.append((uid, image, x.store)))
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffx"), "image/jpeg")})
     assert r.status_code == 200 and saved == [(uuid.UUID(H["X-User-Id"]), b"\xff\xd8\xffx", "Save-On-Foods")]
-
-
-def test_failed_matching_is_retried_on_next_deals(monkeypatch):
-    import json
-
-    from apps.api import databricks_sql, store
-    from apps.api.models import SaveItems
-
-    up, writes = {"db": False}, []
-
-    def query(sql, **p):
-        if "inline" not in sql:
-            return []  # the my_deals read
-        if not up["db"]:
-            raise RuntimeError("warehouse down")
-        return [{"user_item_id": r["user_item_id"], "item_id": "f1", "brand": None} for r in json.loads(p["rows"])]
-
-    def no_index():
-        raise RuntimeError("no AI Search index")
-
-    monkeypatch.setattr(store, "MOCK", False)
-    monkeypatch.setattr(store, "_unmatched", {})
-    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
-    monkeypatch.setattr(databricks_sql, "query", query)
-    monkeypatch.setattr(databricks_sql, "_client", no_index)
-    uid = uuid.uuid4()
-    saved = store.add_items(uid, SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
-    assert uid in store._unmatched
-
-    store.list_deals(uid)  # still down: kept, and backed off so the next call doesn't retry
-    assert store._unmatched[uid][1] == saved and not any("user_item_matches" in s for s, _ in writes)
-
-    up["db"] = True
-    monkeypatch.setattr(store, "RETRY_AFTER", 0.0)
-    store._unmatched[uid] = (0.0, saved)
-    store.list_deals(uid)
-    inserted = [json.loads(p["rows"]) for s, p in writes if "user_item_matches" in s]
-    assert inserted == [[{"user_item_id": saved[0].user_item_id, "flyer_item_id": "f1", "match_score": 0.75}]]
-    assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
 
 
 def test_unknown_extractor_is_rejected(monkeypatch):
@@ -332,28 +328,74 @@ def _user(**kw):
     return logic.UserItem(**{**base, **kw})
 
 
-def test_brand_rule_blocks_other_brands():
-    pc = _user(brand="PC", item="chicken thigh")
-    stores = {d.store for d in logic.deals_for([pc], FLYER_ITEMS)}
-    assert stores == {"Real Canadian Superstore", "No Frills"}  # Western Family at Save-On is excluded
+def _want(**kw):
+    return _user(**{"brand": "Dairyland", "item": "milk", "variant": "2%", "size_qty": 4, "size_unit": "l", **kw})
 
 
-def test_basket_scales_unit_price_to_user_size_and_splits():
-    milk, bananas = _user(item="milk", variant="2%", size_qty=4, size_unit="l"), _user(
-        user_item_id="u2", item="banana", size_qty=2, size_unit="lb")
-    b = logic.basket([milk, bananas], logic.deals_for([milk, bananas], FLYER_ITEMS))
-    split = {s.item_label.split()[0]: (s.store, s.cost) for s in b.split}
-    assert split["milk"] == ("No Frills", 5.79)
-    assert split["banana"] == ("T&T", 1.18)  # 2 lb at $0.59/lb
-    assert b.unmatched == []
-    # Safeway carries both ($5.99 + 2 lb x $0.69); split is No Frills milk + T&T bananas.
-    assert b.cheapest_store == "Safeway" and b.delta == round(5.99 + 1.38 - 5.79 - 1.18, 2)
+def _flyer(**kw):
+    base = dict(item_id="f", page_id="p", store="Safeway", week_start="2026-11-05", brand="Dairyland", item="milk",
+                variant="2%", size_qty=4000, size_unit="ml", price=5.0)
+    return logic.FlyerItem(**{**base, **kw})
 
 
-def test_basket_totals_are_sane_for_counted_items():
-    eggs = _user(item="eggs", variant="large", size_qty=12, size_unit="ea")
-    b = logic.basket([eggs], logic.deals_for([eggs], FLYER_ITEMS))
-    assert {s.store: s.total for s in b.stores}["No Frills"] == 3.99
+@pytest.mark.parametrize("flyer, matches", [
+    (dict(), True),
+    (dict(brand="DAIRYLAND", item="Milk"), True),
+    (dict(size_qty=3780), True),  # 2 x 1.89 L / 1 gal for 4 L
+    (dict(size_qty=4400), True),  # up to +10 %
+    (dict(size_qty=3700), False),  # -7.5 %: less than asked
+    (dict(size_qty=2000), False),
+    (dict(variant="1%"), False),
+    (dict(variant="chocolate"), False),
+    (dict(item="chocolate milk"), False),
+    (dict(brand="Lucerne"), False),
+    (dict(brand=None), False),
+    (dict(size_qty=4, size_unit="kg"), False),  # different dimension
+    (dict(size_qty=None, size_unit=None), False),
+])
+def test_exact_match(flyer, matches):
+    assert logic.same_item(_want(), _flyer(**flyer)) is matches
+
+
+def test_word_order_punctuation_plural_and_accents_are_not_differences():
+    want = _user(brand="Dempster's", item="bagels", variant="skinless boneless", size_qty=1, size_unit="lb")
+    assert logic.same_item(want, _flyer(brand="Dempster's®", item="bagel", variant="Boneless, Skinless",
+                                        size_qty=500, size_unit="g"))  # 1 lb ~ 500 g
+    assert logic.same_item(_want(brand="Rugen"), _flyer(brand="Rügen"))
+
+
+def test_every_field_is_required_to_match():
+    for blank in ("brand", "variant"):
+        u = _want(**{blank: None})
+        assert not logic.same_item(u, _flyer(**{blank: None})) and logic.missing(u) == [blank]
+    assert logic.missing(_want(size_qty=None)) == ["size"]
+
+
+def test_counts_are_exact_and_per_lb_ignores_quantity():
+    eggs = _want(brand="WF", item="eggs", variant="large", size_qty=12, size_unit="ea")
+    assert logic.same_item(eggs, _flyer(brand="WF", item="eggs", variant="large", size_qty=12, size_unit="ea"))
+    assert not logic.same_item(eggs, _flyer(brand="WF", item="eggs", variant="large", size_qty=18, size_unit="ea"))
+    bananas = _want(brand="Dole", item="banana", variant="organic", size_qty=3, size_unit="lb")
+    per_lb = dict(brand="Dole", item="banana", variant="organic", size_qty=453.592, size_unit="g")
+    assert logic.same_item(bananas, _flyer(**per_lb, raw_text="Dole organic bananas $0.89/lb"))
+    assert not logic.same_item(bananas, _flyer(**per_lb, raw_text="Dole organic bananas 1 lb bag"))
+    no_size = {**per_lb, "size_qty": None, "size_unit": None}
+    assert logic.same_item(bananas, _flyer(**no_size, raw_text="DOLE ORGANIC BANANAS $0.89 /lb"))
+
+
+def test_cheapest_is_by_cost_for_the_users_size():
+    deals = logic.deals_for([_want()], FLYER_ITEMS)
+    assert {d.store for d in deals} == {"Save-On-Foods", "Safeway", "Real Canadian Superstore"}
+    best = logic.cheapest(deals)["u1"]
+    assert (best.store, best.cost) == ("Safeway", 5.99)  # Superstore's 2 x 1.89 L is $7.19 scaled to 4 L
+    assert best.page_id and len(best.bbox) == 4 and str(best.valid_to) == "2026-11-11"
+
+
+def test_basket_compares_stores_for_basket_items_only():
+    milk, eggs = _want(), _user(user_item_id="u2", brand="Western Family", item="eggs", variant="large",
+                                size_qty=12, size_unit="ea")
+    b = logic.basket([milk], logic.deals_for([milk, eggs], FLYER_ITEMS))
+    assert b.cheapest_store == "Safeway" and b.split_total == 5.99 and b.unmatched == []
 
 
 def test_intake_is_rate_limited_per_ip(monkeypatch):

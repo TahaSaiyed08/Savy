@@ -10,20 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from apps.api import logic
 from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
-from apps.api.models import Deal, Extraction, SaveItems, UserItem
+from apps.api.models import Extraction, FlyerItem, ItemPatch, SaveItems, UserItem
 
 log = logging.getLogger(__name__)
 MOCK = os.getenv("REALDEAL_MOCK", "0" if os.getenv("DATABRICKS_HOST") else "1") == "1"
-INDEX = "realdeal.core.flyer_items_idx"
 UPLOADS = "/Volumes/realdeal/core/uploads/receipts"
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+_MINE = "WHERE user_id = :user_id AND user_item_id = :user_item_id"  # every per-item write is scoped to its owner
+_EDITABLE = ("brand", "item", "variant", "size_qty", "size_unit")
 # Batches travel as one JSON string parameter and are expanded with inline(from_json(...)) in SQL.
 _ITEM_ROWS = ("ARRAY<STRUCT<user_item_id: STRING, user_id: STRING, brand: STRING, item: STRING, variant: STRING, "
               "size_qty: DOUBLE, size_unit: STRING, source: STRING, added_at: STRING, last_bought_at: STRING>>")
-_MATCH_ROWS = "ARRAY<STRUCT<user_item_id: STRING, flyer_item_id: STRING, match_score: DOUBLE>>"
-_LIKE_ROWS = "ARRAY<STRUCT<user_item_id: STRING, brand: STRING, item: STRING>>"
 
 
 def _new_item(user_id: UUID, source: str, bought_at: datetime | None = None, **fields) -> UserItem:
@@ -42,94 +40,35 @@ def _mock_items(user_id: UUID) -> list[UserItem]:
     return _items[user_id]
 
 
-# --- databricks -----------------------------------------------------------
+# --- flyers (both modes) ----------------------------------------------------
+FLYER_TTL = 600.0  # flyers change weekly; every list read matches against this in-process copy
+_flyer_cache: tuple[float, list[FlyerItem]] = (0.0, [])
+_flyer_lock = threading.Lock()
 
 
-def _match_and_store(items: list[UserItem]) -> None:
-    """Top-3 per item from AI Search (one LIKE query for any it misses), brand rule + threshold, one INSERT.
-
-    Matches land in user_item_matches, which my_deals reads.
-    """
+def flyer_items() -> list[FlyerItem]:
+    """Every listing still valid today, across all stores."""
+    global _flyer_cache
+    if MOCK:
+        return FLYER_ITEMS
     from apps.api import databricks_sql as db
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        found = dict(zip((u.user_item_id for u in items), pool.map(_search, items), strict=True))
-    missed = [u for u in items if found[u.user_item_id] is None]
-    if missed:
-        found.update(_like_fallback(missed))
-    matches = [
-        {"user_item_id": u.user_item_id, "flyer_item_id": item_id, "match_score": float(score)}
-        for u in items for item_id, brand, score in found.get(u.user_item_id) or []
-        if float(score) >= logic.MATCH_THRESHOLD and not (u.brand and (brand or "").lower() != u.brand.lower())
-    ]
-    if matches:
-        db.execute(  # idempotent, so a retry after a partial or timed-out attempt can't duplicate rows
-            "INSERT INTO user_item_matches SELECT s.user_item_id, s.flyer_item_id, s.match_score, current_timestamp() "
-            f"FROM (SELECT inline(from_json(:rows, '{_MATCH_ROWS}'))) s WHERE NOT EXISTS (SELECT 1 FROM "
-            "user_item_matches m WHERE m.user_item_id = s.user_item_id AND m.flyer_item_id = s.flyer_item_id)",
-            rows=json.dumps(matches))
+    with _flyer_lock:  # one warehouse query per TTL, not one per concurrent request
+        if time.monotonic() - _flyer_cache[0] > FLYER_TTL:
+            rows = db.query("SELECT * FROM flyer_items WHERE price IS NOT NULL "
+                            "AND coalesce(valid_to, date_add(week_start, 6)) >= current_date()")
+            _flyer_cache = (time.monotonic(), [FlyerItem(**r) for r in rows])
+        return _flyer_cache[1]
 
 
-# Items whose matching failed, retried on the user's next /deals or /basket. Process memory, so a restart drops
-# them; the weekly re-match (plan WS2 step 8) is the durable sweep.
-RETRY_AFTER = 60.0
-_unmatched: dict[UUID, tuple[float, list[UserItem]]] = {}
-_unmatched_lock = threading.Lock()
+def page_tiles(page_id: str) -> list[FlyerItem]:
+    return [f for f in flyer_items() if f.page_id == page_id]
 
 
-def _queue_rematch(user_id: UUID, items: list[UserItem], delay: float = 0.0) -> None:
-    """delay=0 retries on the next /deals; a failed retry backs off RETRY_AFTER so an outage doesn't slow every call."""
-    with _unmatched_lock:
-        _, pending = _unmatched.get(user_id, (0.0, []))
-        _unmatched[user_id] = (time.monotonic() + delay, pending + items)
-
-
-def _retry_rematch(user_id: UUID) -> None:
-    now = time.monotonic()
-    with _unmatched_lock:
-        due, pending = _unmatched.get(user_id, (0.0, []))
-        if not pending or now < due:
-            return
-        del _unmatched[user_id]  # claimed, so concurrent requests don't retry the same items
-    try:
-        _match_and_store(pending)
-    except Exception:
-        log.warning("re-match failed for %d items; will retry", len(pending), exc_info=True)
-        _queue_rematch(user_id, pending, RETRY_AFTER)
-
-
-def _search(u: UserItem) -> list[tuple] | None:
-    """AI Search top-3 as (item_id, brand, score), or None if the index is unavailable."""
+def page_image(path: str) -> bytes:
     from apps.api import databricks_sql as db
 
-    try:
-        r = db._client().vector_search_indexes.query_index(
-            index_name=INDEX, columns=["item_id", "brand", "item", "variant"],
-            query_text=logic.label(u), num_results=3,
-        )
-    except Exception as e:
-        log.warning("AI Search unavailable, falling back to LIKE: %s", e)
-        return None
-    return [(row[0], row[1], row[-1]) for row in (r.result.data_array or [])]  # score is last
-
-
-def _like_fallback(items: list[UserItem]) -> dict[str, list[tuple]]:
-    """One query for all items: top-3 this-week flyer items containing the item name, same brand ranked first."""
-    from apps.api import databricks_sql as db
-
-    rows = db.query(
-        f"WITH u AS (SELECT inline(from_json(:rows, '{_LIKE_ROWS}'))) "
-        "SELECT u.user_item_id, f.item_id, f.brand FROM u JOIN flyer_items f "
-        "ON f.week_start = (SELECT max(week_start) FROM flyer_items) "
-        "AND lower(f.item) LIKE concat('%', lower(u.item), '%') "
-        "QUALIFY row_number() OVER (PARTITION BY u.user_item_id "
-        "ORDER BY coalesce(lower(f.brand) = lower(u.brand), false) DESC, f.item_id) <= 3",
-        rows=json.dumps([{"user_item_id": u.user_item_id, "brand": u.brand, "item": u.item} for u in items]),
-    )
-    out: dict[str, list[tuple]] = {u.user_item_id: [] for u in items}
-    for x in rows:
-        out[x["user_item_id"]].append((x["item_id"], x["brand"], 0.75))
-    return out
+    return db._client().files.download(path).contents.read()
 
 
 # --- interface used by main.py ---------------------------------------------
@@ -140,23 +79,21 @@ def list_items(user_id: UUID) -> list[UserItem]:
         return _mock_items(user_id)
     from apps.api import databricks_sql as db
 
-    rows = db.query("SELECT * FROM user_items WHERE user_id = :user_id ORDER BY added_at DESC",
-                    user_id=str(user_id))
+    rows = db.query("SELECT u.*, b.user_item_id IS NOT NULL AS in_basket FROM user_items u "
+                    "LEFT JOIN basket_items b ON b.user_item_id = u.user_item_id AND b.user_id = u.user_id "
+                    "WHERE u.user_id = :user_id ORDER BY u.added_at DESC", user_id=str(user_id))
     return [UserItem(**r) for r in rows]
 
 
 def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
-    new = [_new_item(user_id, req.source, req.bought_at,
-                     **i.model_dump(include={"brand", "item", "variant", "size_qty", "size_unit"}))
-           for i in req.items]
+    new = [_new_item(user_id, req.source, req.bought_at, **i.model_dump(include=set(_EDITABLE))) for i in req.items]
     if MOCK:
         _mock_items(user_id)[:0] = new
         return new
     from apps.api import databricks_sql as db
 
-    rows = json.dumps([{**u.model_dump(mode="json"), "user_id": str(u.user_id)} for u in new])
-    # Fixed statement count however many items, and the three independent ones run concurrently.
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    rows = json.dumps([{**u.model_dump(mode="json", exclude={"in_basket"}), "user_id": str(u.user_id)} for u in new])
+    with ThreadPoolExecutor(max_workers=2) as pool:  # fixed statement count however many items
         writes = [
             pool.submit(db.execute,
                         "MERGE INTO users t USING (SELECT :user_id AS user_id) s ON t.user_id = s.user_id "
@@ -168,15 +105,34 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
                         "size_qty, size_unit, source, CAST(added_at AS TIMESTAMP), CAST(last_bought_at AS TIMESTAMP) "
                         f"FROM (SELECT inline(from_json(:rows, '{_ITEM_ROWS}')))", rows=rows),
         ]
-        matching = pool.submit(_match_and_store, new)
         for w in writes:
             w.result()  # a failed write must surface
-        try:
-            matching.result()
-        except Exception:  # the items are saved; matching is retried on the user's next /deals or /basket
-            log.warning("matching failed; saved %d items without matches", len(new), exc_info=True)
-            _queue_rematch(user_id, new)
     return new
+
+
+def update_item(user_id: UUID, user_item_id: str, patch: ItemPatch) -> UserItem | None:
+    """Edit fields and/or move to or from the basket. None if the user has no such item."""
+    fields = {k: getattr(patch, k) for k in patch.model_fields_set if k in _EDITABLE}
+    if MOCK:
+        items = _mock_items(user_id)
+        for n, i in enumerate(items):
+            if i.user_item_id == user_item_id:
+                in_basket = i.in_basket if patch.in_basket is None else patch.in_basket
+                items[n] = i.model_copy(update={**fields, "in_basket": in_basket})
+                return items[n]
+        return None
+    from apps.api import databricks_sql as db
+
+    ids, mine = dict(user_id=str(user_id), user_item_id=user_item_id), _MINE
+    if fields:  # keys come from _EDITABLE, never from the client
+        db.execute(f"UPDATE user_items SET {', '.join(f'{k} = :{k}' for k in fields)} {mine}", **fields, **ids)
+    if patch.in_basket:
+        db.execute("INSERT INTO basket_items SELECT :user_id, :user_item_id, current_timestamp() WHERE "
+                   f"EXISTS (SELECT 1 FROM user_items {mine}) "
+                   f"AND NOT EXISTS (SELECT 1 FROM basket_items {mine})", **ids)
+    elif patch.in_basket is False:
+        db.execute(f"DELETE FROM basket_items {mine}", **ids)
+    return next((i for i in list_items(user_id) if i.user_item_id == user_item_id), None)
 
 
 def delete_item(user_id: UUID, user_item_id: str) -> None:
@@ -186,8 +142,8 @@ def delete_item(user_id: UUID, user_item_id: str) -> None:
         return
     from apps.api import databricks_sql as db
 
-    db.execute("DELETE FROM user_items WHERE user_id = :user_id AND user_item_id = :user_item_id",
-               user_id=str(user_id), user_item_id=user_item_id)
+    for table in ("basket_items", "user_items"):
+        db.execute(f"DELETE FROM {table} {_MINE}", user_id=str(user_id), user_item_id=user_item_id)
 
 
 def save_receipt(user_id: UUID, image: bytes, x: Extraction) -> None:
@@ -216,17 +172,3 @@ def _iso_date(s: str | None) -> date | None:
         return date.fromisoformat(s[:10]) if s else None
     except ValueError:
         return None
-
-
-def list_deals(user_id: UUID) -> list[Deal]:
-    if MOCK:
-        return logic.deals_for(_mock_items(user_id), FLYER_ITEMS)
-    from apps.api import databricks_sql as db
-
-    _retry_rematch(user_id)
-    rows = db.query(
-        "SELECT d.*, concat_ws(' ', u.brand, u.item, u.variant) AS item_label, "
-        "concat_ws(' ', f.brand, f.item, f.variant) AS flyer_label, f.unit "
-        "FROM my_deals d JOIN user_items u USING (user_item_id) JOIN flyer_items f ON f.item_id = d.flyer_item_id "
-        "WHERE d.user_id = :user_id", user_id=str(user_id))
-    return [Deal(**r) for r in rows]

@@ -9,11 +9,24 @@ from typing import Annotated
 from uuid import UUID
 
 import anthropic
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, UploadFile
 
 from apps.api import logic, store, stt
 from apps.api.extractors import Extractor, get_extractor
-from apps.api.models import Basket, Deal, Extraction, IntakeResponse, ManualIntake, Mode, SaveItems, UserItem
+from apps.api.models import (
+    Basket,
+    Deal,
+    Extraction,
+    IntakeResponse,
+    ItemPatch,
+    ListItem,
+    ManualIntake,
+    Mode,
+    PageView,
+    SaveItems,
+    Tile,
+    UserItem,
+)
 
 log = logging.getLogger(__name__)
 
@@ -139,15 +152,32 @@ def intake_voice(user_id: UserId, file: UploadFile, ext: Ext) -> IntakeResponse:
     return _respond(_extract(ext, "manual", text=text), transcript=text)
 
 
+def _listed(items: list[UserItem]) -> list[ListItem]:
+    best = logic.cheapest(logic.deals_for(items, store.flyer_items()))
+    return [ListItem(**i.model_dump(), cheapest=best.get(i.user_item_id), missing=logic.missing(i)) for i in items]
+
+
 @app.get("/items")
-def get_items(user_id: UserId) -> list[UserItem]:
-    return store.list_items(user_id)
+def get_items(user_id: UserId) -> list[ListItem]:
+    """My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}."""
+    return _listed(store.list_items(user_id))
 
 
 @app.post("/items")
-def save_items(user_id: UserId, body: SaveItems) -> list[UserItem]:
-    """Saves confirmed intake results."""
-    return store.add_items(user_id, body)
+def save_items(user_id: UserId, body: SaveItems) -> list[ListItem]:
+    """Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing)."""
+    return _listed(store.add_items(user_id, body))
+
+
+@app.patch("/items/{user_item_id}")
+def update_item(user_id: UserId, user_item_id: str, body: ItemPatch) -> ListItem:
+    """Edit an item, or move it to (in_basket: true) or from (false) the Basket."""
+    if "item" in body.model_fields_set and not body.item:
+        raise HTTPException(422, "item can't be empty")
+    item = store.update_item(user_id, user_item_id, body)
+    if item is None:
+        raise HTTPException(404, "no such item")
+    return _listed([item])[0]
 
 
 @app.delete("/items/{user_item_id}", status_code=204)
@@ -157,9 +187,38 @@ def delete_item(user_id: UserId, user_item_id: str) -> None:
 
 @app.get("/deals")
 def get_deals(user_id: UserId) -> list[Deal]:
-    return store.list_deals(user_id)
+    """Every store's cheapest exact listing for every item on My List."""
+    return logic.deals_for(store.list_items(user_id), store.flyer_items())
 
 
 @app.get("/basket")
 def get_basket(user_id: UserId) -> Basket:
-    return logic.basket(store.list_items(user_id), store.list_deals(user_id))
+    """Store comparison for the Basket (items with in_basket) only."""
+    items = [i for i in store.list_items(user_id) if i.in_basket]
+    return logic.basket(items, logic.deals_for(items, store.flyer_items()))
+
+
+@app.get("/flyer-pages/{page_id}")
+def get_page(page_id: str) -> PageView:
+    """The flyer page a listing is on, with every tile's box, for the price-match screen."""
+    tiles = store.page_tiles(page_id)
+    if not tiles:
+        raise HTTPException(404, "page not in a current flyer")
+    f = tiles[0]
+    return PageView(
+        page_id=page_id, store=f.store, page_no=f.page_no, valid_from=f.valid_from, valid_to=f.valid_to,
+        image_url=f"/flyer-pages/{page_id}/image" if f.image_path else None, aspect=f.page_aspect,
+        tiles=[Tile(item_id=t.item_id, bbox=t.bbox, image_url=t.image_url, label=t.raw_text or logic.label(t),
+                    price=t.price) for t in tiles if t.bbox and len(t.bbox) == 4],
+    )
+
+
+@app.get("/flyer-pages/{page_id}/image", response_class=Response,
+         responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}})
+def get_page_image(page_id: str) -> Response:
+    """The page JPEG/PNG from the flyers Volume (only pages that came from page images, not Flipp)."""
+    path = next((t.image_path for t in store.page_tiles(page_id) if t.image_path), None)
+    if not path:
+        raise HTTPException(404, "no page image")
+    media = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+    return Response(store.page_image(path), media_type=media, headers={"Cache-Control": "public, max-age=604800"})

@@ -10,7 +10,7 @@ thing behind a frozen interface, so nobody blocks anybody.
 
 | Between          | Interface                                                                      | Lives in                                                                                      | Guarded by                                                |
 | ---------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, `views.sql`, pipeline table definitions                             | `apps/api/models.py` mirrors every column                 |
+| 1 ↔ 2            | Table DDL for `realdeal.core`                                                  | `databricks/sql/ddl.sql`, pipeline table definitions                                          | `apps/api/models.py` mirrors every column                 |
 | 2 ↔ 3            | OpenAPI schema                                                                 | `apps/api/models.py` + `main.py` → `apps/web/openapi.json` → `apps/web/src/lib/api-schema.ts` | CI `make check-api` fails if the client is stale          |
 | 3 ↔ 4            | Component list: `LargeTitle`, `InsetGroup`, `Row`, `Status`, `TabBar` + tokens | `apps/web/src/components/ui.tsx`, `TabBar.tsx`, `src/app/globals.css`                         | Design changes tokens and Figma; Frontend keeps the props |
 | 1 ↔ 2 ↔ pipeline | `ExtractedItem` schema and prompts                                             | `shared/prompts/*.md` (active versions in `shared/__init__.py`), `shared/units.py`            | `databricks/test_prompt_sync.py`, `shared/test_units.py`  |
@@ -30,14 +30,14 @@ Branch as `ws<N>/<topic>`, e.g. `ws1/ai-query`. Keep PRs small; `main` must stay
 Owner: krish-arora-88
 
 **Must not break:** column names and types in `databricks/sql/ddl.sql` and the pipeline's `flyer_items` /
-`weekly_prices` (FastAPI and `my_deals` read them); the Volume path layout `flyers/<store>/<week_start>/<page_no>.jpg`;
+`weekly_prices` (FastAPI reads them); the Volume path layout `flyers/<store>/<week_start>/<page_no>.jpg` and `flipp.jsonl`;
 the `ExtractedItem` fields; `normalize_unit`'s return type.
 
 1. Create the Free Edition workspace (verify with LinkedIn). Create a SQL warehouse and a PAT; share
    `DATABRICKS_HOST` / `DATABRICKS_WAREHOUSE_ID` with the team.
 2. Run `databricks/sql/ddl.sql` in the SQL editor: catalog `realdeal`, schema `core`, Volumes `flyers` + `uploads`,
    app tables.
-3. Upload one flyer page: `uv run python databricks/fetchers/save_on_foods.py --from-dir ~/flyer-shots`.
+3. Upload one flyer page: `uv run python databricks/fetchers/common.py save_on_foods ~/flyer-shots`.
    **10:00 go/no-go.**
 4. Run the `ai_query` from `databricks/pipeline/02_extract.sql` by hand on that page (swap `${realdeal.model}`
    for the endpoint, `STREAM(flyer_pages)` for `read_files('/Volumes/...', format => 'binaryFile')`). Try
@@ -45,15 +45,16 @@ the `ExtractedItem` fields; `normalize_unit`'s return type.
    structured items, tell Workstream 2 to switch to `EXTRACTOR=claude` and write rows to Silver from FastAPI.
 5. Install the Databricks CLI; `databricks bundle deploy && databricks bundle run realdeal_flyers` (root
    `databricks.yml`). Check `flyer_pages`, `flyer_extractions`, `flyer_items`, `weekly_prices`.
-6. Implement `fetch()` in each `databricks/fetchers/<store>.py` (5 stores, run serially: 5-task limit).
+6. `uv run --env-file .env python databricks/fetchers/flipp.py --limit 5` (all 5 stores from Flipp's public JSON:
+   exact tile boxes, prices, valid dates), run the pipeline with `--full-refresh flyer_items` once (Silver is now a
+   union), check the rows, then rerun without `--limit`.
 7. Build the 20-page golden set; measure field accuracy. **13:00 go/no-go:** ≥ 85 %, else drop to the two cleanest stores.
-8. Run `databricks/sql/views.sql` (needs `flyer_items`), then `uv run python databricks/setup/ai_search_index.py`.
-9. Tune the match threshold (spec: about 0.75) on 20 known user-item ↔ flyer-item pairs; report the number to WS2
-   (`MATCH_THRESHOLD` in `apps/api/logic.py`).
+8. Matching is exact (`logic.same_item`: brand, item, variant and size, size within `SIZE_WINDOW`), so there is no
+   threshold or AI Search index. Check 20 known user-item ↔ flyer-item pairs match, and that near-misses don't.
 10. Add `normalize_unit` cases for any flyer text that parses wrong (add to `shared/test_units.py` first).
 
 **Done when:** `SELECT count(*) FROM realdeal.core.flyer_items` > 2,000 real rows from this week's flyers, and
-`flyer_items_idx` answers a query.
+the 20 known pairs match exactly.
 
 ## Workstream 2: Backend
 
@@ -66,13 +67,13 @@ Owner: primenumberhater666
 2. Set `ANTHROPIC_API_KEY`; test `ClaudeExtractor` on a real receipt (`/intake/receipt`). Tune
    `shared/prompts/receipt.v1.md` (copy to `v2`, add it to `PROMPT_VERSIONS` in `shared/__init__.py`) until the demo receipt parses cleanly.
 3. Once WS1 has tables, set the Databricks env vars and `REALDEAL_MOCK=0`. Exercise `store.py`'s real paths:
-   `list_items`, `add_items` (insert + AI Search match + `LIKE` fallback), `list_deals`.
+   `list_items`, `add_items`, `update_item` (edit, basket), `flyer_items` (exact matching runs on read).
 4. Write receipts to `receipts` and the image to `/Volumes/realdeal/core/uploads/` on `/intake/receipt`.
 5. Product photo: return the top candidate plus two alternates (prompt already asks for it).
 6. Voice: set `ELEVENLABS_API_KEY`; confirm `/intake/voice` with a webm from Safari and Chrome.
 7. If WS1 says `ai_query` works: implement `DatabricksAIExtractor` (upload → `ai_query` over `read_files`).
    If it doesn't: write flyer extractions from FastAPI to `flyer_extractions` with the same JSON shape.
-8. Weekly re-match: re-run `_match_and_store` for every user item when a new `week_start` lands.
+8. Weekly re-match: nothing to do; matches are computed on every read against flyers valid today.
 9. Optional: host FastAPI as a Databricks App (3 apps max, auto-stop after 24 h, restart before judging).
 
 **Done when:** all endpoints return real data against WS1's tables, and OpenAPI docs are served.
@@ -91,7 +92,7 @@ Owner: _unclaimed_
    Product photo: chip picker over the candidates.
 4. Manual entry: text field → `/intake/manual` → inline edit of parsed fields → `/items`.
 5. Hold-to-talk on the manual sheet: `MediaRecorder` → `/intake/voice`. Safari records `audio/mp4`, Chrome `audio/webm`.
-6. Deals: "exact" vs "probable match" from `match_score`; savings vs median.
+6. Tap an item: `item.cheapest` → `GET /flyer-pages/{page_id}`, highlight the tile, sticky card with valid dates.
 7. Basket: cheapest store card, split-shop list, dollar delta, "no deal this week" rows.
 8. Install to home screen on an iPhone and an Android via a tunnel (e.g. `cloudflared tunnel --url http://localhost:3000`);
    make the QR for the demo slide.

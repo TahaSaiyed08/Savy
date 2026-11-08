@@ -1,6 +1,6 @@
 """Run a .sql file (or -e "SQL") on the team warehouse via the SQL Statement API, in realdeal.core.
 
-Usage: uv run --env-file .env python databricks/setup/run_sql.py databricks/sql/views.sql
+Usage: uv run --env-file .env python databricks/setup/run_sql.py databricks/sql/ddl.sql
        uv run --env-file .env python databricks/setup/run_sql.py -e "SELECT count(*) FROM flyer_items"
 
 Strips -- comments and splits on ; (both quote-aware), skips USE lines (catalog/schema are passed instead),

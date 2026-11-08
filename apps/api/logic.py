@@ -1,11 +1,24 @@
-"""Pure matching and basket rules from the spec. No I/O, so they are unit-tested in test_api.py."""
+"""Pure matching and basket rules. No I/O, so they are unit-tested in test_api.py.
+
+Matching is exact: brand, item, variant and size must all be present on the user's item and equal the flyer's.
+Words are compared as a set after lowercasing, stripping accents/punctuation and a trailing plural "s", so
+"Dempster's®" == "dempsters" and "skinless boneless" == "boneless skinless", but "2%" != "1%" and
+milk != chocolate milk.
+Sizes may differ only by the imperial/metric rounding window in SIZE_WINDOW, except sold-by-weight listings.
+"""
 import re
+import unicodedata
 from statistics import median
 
 from apps.api.models import Basket, Deal, ExtractedItem, FlyerItem, SplitLine, StoreTotal, UserItem
-from shared.units import Size, normalize_unit, unit_price
+from shared.units import Size, normalize_unit, per_weight, unit_price
 
-MATCH_THRESHOLD = 0.75
+# Allowed flyer size / wanted size, per base unit. Asymmetric: a bit more is fine, noticeably less is not.
+#   volume: 946 mL ~ 1 L, 1.89 L ~ 2 L, 3.78 L ~ 4 L (either way), but 750 mL != 1 L
+#   mass:   454 g (1 lb) ~ 500 g (either way), 907 g (2 lb) ~ 1 kg
+#   count:  exact (a dozen is a dozen)
+SIZE_WINDOW = {"ml": (0.94, 1.10), "g": (0.90, 1.11), "ea": (1.0, 1.0)}
+FIELDS = ("brand", "item", "variant", "size")
 _WORD = re.compile(r"[a-z0-9%]+")
 
 
@@ -14,58 +27,80 @@ def label(x: UserItem | FlyerItem | ExtractedItem) -> str:
     return " ".join(p for p in (x.brand, x.item, x.variant, size) if p)
 
 
-def match_score(user: UserItem, flyer: FlyerItem) -> float:
-    """Fraction of the user's item words present in the flyer item; 0 if a named brand differs.
+def _words(s: str | None) -> frozenset[str]:
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().replace("'", "")
+    return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+                     for w in _WORD.findall(s))
 
-    ponytail: word overlap stands in for AI Search in mock mode; the brand rule applies to both.
-    """
-    if user.brand and (flyer.brand or "").lower() != user.brand.lower():
-        return 0.0
-    want = set(_WORD.findall(f"{user.item} {user.variant or ''}".lower()))
-    have = set(_WORD.findall(f"{flyer.item} {flyer.variant or ''} {flyer.raw_text or ''}".lower()))
-    return len(want & have) / len(want) if want else 0.0
+
+def size_of(x: UserItem | FlyerItem) -> Size | None:
+    if not x.size_qty or not x.size_unit:
+        return None
+    s = Size(x.size_qty, "ea") if x.size_unit.lower() == "ea" else normalize_unit(f"{x.size_qty:g} {x.size_unit}")
+    return s if s and s.qty > 0 else None
+
+
+def missing(u: UserItem) -> list[str]:
+    """Fields the user still has to fill in before this item can match anything."""
+    return [f for f in FIELDS if not (size_of(u) if f == "size" else _words(getattr(u, f)))]
+
+
+def same_item(u: UserItem, f: FlyerItem) -> bool:
+    if missing(u) or any(_words(getattr(u, k)) != _words(getattr(f, k)) for k in ("brand", "item", "variant")):
+        return False
+    want, have = size_of(u), size_of(f) or normalize_unit(f.raw_text or "")  # "$0.79 /lb" with no size field
+    if have is None or have.unit != want.unit:
+        return False
+    if per_weight(f.raw_text or ""):  # "$0.69/lb": 2 lb of bananas is the same listing as 1 lb
+        return True
+    lo, hi = SIZE_WINDOW[want.unit]
+    return lo <= have.qty / want.qty <= hi
+
+
+def cost(listing: FlyerItem | Deal, user: UserItem) -> float:
+    """What the user's size costs at this listing: unit price scaled to the user's size when known, else shelf price."""
+    up = unit_price(1.0, size_of(user))  # (100 / qty) or (1 / count), so cost = unit_price / up[0]
+    if listing.unit_price is not None and up and listing.unit == up[1]:
+        return round(listing.unit_price / up[0], 2)
+    return listing.price or 0.0
 
 
 def deals_for(user_items: list[UserItem], flyer_items: list[FlyerItem]) -> list[Deal]:
-    """Best match per (user item, store) above threshold, with savings vs the cross-store median."""
+    """Cheapest exact listing per (user item, store), with savings vs the cross-store median unit price."""
     out: list[Deal] = []
     for u in user_items:
-        best: dict[str, tuple[float, FlyerItem]] = {}
+        best: dict[str, FlyerItem] = {}
         for f in flyer_items:
-            s = match_score(u, f)
-            if s >= MATCH_THRESHOLD and (f.store not in best or s > best[f.store][0]):
-                best[f.store] = (s, f)
-        prices = [f.unit_price for _, f in best.values() if f.unit_price is not None]
+            if f.price is not None and same_item(u, f) and (f.store not in best or cost(f, u) < cost(best[f.store], u)):
+                best[f.store] = f
+        prices = [f.unit_price for f in best.values() if f.unit_price is not None]
         mid = median(prices) if prices else None
-        for s, f in best.values():
-            out.append(Deal(
-                user_id=u.user_id, user_item_id=u.user_item_id, flyer_item_id=f.item_id, store=f.store,
-                price=f.price, unit_price=f.unit_price, unit=f.unit, match_score=round(s, 3),
-                savings_vs_median=None if mid is None or f.unit_price is None else round(mid - f.unit_price, 4),
-                item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
-            ))
+        out += [Deal(
+            user_id=u.user_id, user_item_id=u.user_item_id, flyer_item_id=f.item_id, store=f.store,
+            price=f.price, unit_price=f.unit_price, unit=f.unit, cost=cost(f, u),
+            savings_vs_median=None if mid is None or f.unit_price is None else round(mid - f.unit_price, 4),
+            item_label=label(u), flyer_label=f.raw_text or label(f), week_start=f.week_start,
+            page_id=f.page_id, page_no=f.page_no, bbox=f.bbox, valid_from=f.valid_from, valid_to=f.valid_to,
+        ) for f in best.values()]
     return out
 
 
-def cost(deal: Deal, user: UserItem) -> float:
-    """What this item costs at this store: unit price scaled to the user's size when known, else shelf price."""
-    size = None
-    if user.size_qty and user.size_unit:
-        size = (Size(user.size_qty, "ea") if user.size_unit == "ea"
-                else normalize_unit(f"{user.size_qty}{user.size_unit}"))
-    up = unit_price(1.0, size)  # (100 / qty) or (1 / count), so cost = unit_price / up[0]
-    if deal.unit_price is not None and up and deal.unit == up[1]:
-        return round(deal.unit_price / up[0], 2)
-    return deal.price or 0.0
+def cheapest(deals: list[Deal]) -> dict[str, Deal]:
+    """user_item_id -> its cheapest listing across all stores (what tapping the item opens)."""
+    best: dict[str, Deal] = {}
+    for d in deals:
+        if d.user_item_id not in best or d.cost < best[d.user_item_id].cost:
+            best[d.user_item_id] = d
+    return best
 
 
 def basket(user_items: list[UserItem], deals: list[Deal]) -> Basket:
     by_item = {u.user_item_id: u for u in user_items}
-    stores = sorted({d.store for d in deals})
+    stores = sorted({d.store for d in deals if d.user_item_id in by_item})
     per_store: dict[str, dict[str, float]] = {s: {} for s in stores}
     for d in deals:
-        c = cost(d, by_item[d.user_item_id])
-        per_store[d.store][d.user_item_id] = min(c, per_store[d.store].get(d.user_item_id, c))
+        if d.user_item_id in by_item:
+            per_store[d.store][d.user_item_id] = min(d.cost, per_store[d.store].get(d.user_item_id, d.cost))
 
     totals = sorted(
         (StoreTotal(store=s, total=round(sum(v.values()), 2), matched=len(v), missing=len(by_item) - len(v))
@@ -79,14 +114,14 @@ def basket(user_items: list[UserItem], deals: list[Deal]) -> Basket:
             c, s = min(offers)
             split.append(SplitLine(user_item_id=uid, item_label=label(u), store=s, cost=c))
     split_total = round(sum(line.cost for line in split), 2)
-    cheapest = totals[0] if totals else None
+    best = totals[0] if totals else None
     return Basket(
         stores=totals,
-        cheapest_store=cheapest.store if cheapest else None,
+        cheapest_store=best.store if best else None,
         split=split,
         split_total=split_total,
         # Apples to apples: split-shopping only the items the cheapest single store also carries.
-        delta=round(cheapest.total - sum(x.cost for x in split if x.user_item_id in per_store[cheapest.store]), 2)
-        if cheapest else 0.0,
+        delta=round(best.total - sum(x.cost for x in split if x.user_item_id in per_store[best.store]), 2)
+        if best else 0.0,
         unmatched=[label(u) for uid, u in by_item.items() if not any(uid in v for v in per_store.values())],
     )

@@ -46,6 +46,12 @@ def normalize_unit(text: str) -> Size | None:
     return None
 
 
+def per_weight(text: str) -> bool:
+    """'$3.99/lb', 'per kg': sold by weight, so any amount of it is the same listing."""
+    m = _PER.search(text)
+    return bool(m) and _FACTORS[m[1].lower()][1] == "g"
+
+
 def unit_price(price: float, size: Size | None) -> tuple[float, str] | None:
     """Price per 100 g / 100 mL / each, the basis every store comparison uses."""
     if size is None or size.qty <= 0:

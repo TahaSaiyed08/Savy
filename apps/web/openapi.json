@@ -236,6 +236,7 @@
     "/items": {
       "get": {
         "summary": "Get Items",
+        "description": "My List (and Basket: in_basket). Tapping a row opens item.cheapest via GET /flyer-pages/{page_id}.",
         "operationId": "get_items_items_get",
         "parameters": [
           {
@@ -259,7 +260,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UserItem"
+                    "$ref": "#/components/schemas/ListItem"
                   },
                   "title": "Response Get Items Items Get"
                 }
@@ -280,7 +281,7 @@
       },
       "post": {
         "summary": "Save Items",
-        "description": "Saves confirmed intake results.",
+        "description": "Saves confirmed intake results. Items missing brand, variant or size are saved but match nothing (missing).",
         "operationId": "save_items_items_post",
         "parameters": [
           {
@@ -314,7 +315,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UserItem"
+                    "$ref": "#/components/schemas/ListItem"
                   },
                   "title": "Response Save Items Items Post"
                 }
@@ -335,6 +336,66 @@
       }
     },
     "/items/{user_item_id}": {
+      "patch": {
+        "summary": "Update Item",
+        "description": "Edit an item, or move it to (in_basket: true) or from (false) the Basket.",
+        "operationId": "update_item_items__user_item_id__patch",
+        "parameters": [
+          {
+            "name": "user_item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Item Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "UUID generated on the device",
+              "title": "X-User-Id"
+            },
+            "description": "UUID generated on the device"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "summary": "Delete Item",
         "operationId": "delete_item_items__user_item_id__delete",
@@ -381,6 +442,7 @@
     "/deals": {
       "get": {
         "summary": "Get Deals",
+        "description": "Every store's cheapest exact listing for every item on My List.",
         "operationId": "get_deals_deals_get",
         "parameters": [
           {
@@ -427,6 +489,7 @@
     "/basket": {
       "get": {
         "summary": "Get Basket",
+        "description": "Store comparison for the Basket (items with in_basket) only.",
         "operationId": "get_basket_basket_get",
         "parameters": [
           {
@@ -451,6 +514,83 @@
                   "$ref": "#/components/schemas/Basket"
                 }
               }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flyer-pages/{page_id}": {
+      "get": {
+        "summary": "Get Page",
+        "description": "The flyer page a listing is on, with every tile's box, for the price-match screen.",
+        "operationId": "get_page_flyer_pages__page_id__get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flyer-pages/{page_id}/image": {
+      "get": {
+        "summary": "Get Page Image",
+        "description": "The page JPEG/PNG from the flyers Volume (only pages that came from page images, not Flipp).",
+        "operationId": "get_page_image_flyer_pages__page_id__image_get",
+        "parameters": [
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Page Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "image/jpeg": {},
+              "image/png": {}
             }
           },
           "422": {
@@ -608,7 +748,8 @@
           },
           "match_score": {
             "type": "number",
-            "title": "Match Score"
+            "title": "Match Score",
+            "default": 1.0
           },
           "savings_vs_median": {
             "anyOf": [
@@ -651,6 +792,63 @@
               }
             ],
             "title": "Week Start"
+          },
+          "cost": {
+            "type": "number",
+            "title": "Cost"
+          },
+          "page_id": {
+            "type": "string",
+            "title": "Page Id"
+          },
+          "page_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page No"
+          },
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
           }
         },
         "type": "object",
@@ -659,11 +857,13 @@
           "user_item_id",
           "flyer_item_id",
           "store",
-          "match_score",
           "item_label",
-          "flyer_label"
+          "flyer_label",
+          "cost",
+          "page_id"
         ],
-        "title": "Deal"
+        "title": "Deal",
+        "description": "One flyer listing that is exactly the user's item (logic.same_item), with where to find it in the flyer."
       },
       "ExtractedItem": {
         "properties": {
@@ -832,6 +1032,202 @@
         "title": "IntakeResponse",
         "description": "Parsed but NOT saved. The client confirms, then POSTs /items."
       },
+      "ItemPatch": {
+        "properties": {
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          },
+          "size_qty": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Qty"
+          },
+          "size_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Unit"
+          },
+          "in_basket": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Basket"
+          }
+        },
+        "type": "object",
+        "title": "ItemPatch",
+        "description": "Edit a list item or move it to/from the basket. Only the fields sent are changed."
+      },
+      "ListItem": {
+        "properties": {
+          "user_item_id": {
+            "type": "string",
+            "title": "User Item Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "item": {
+            "type": "string",
+            "title": "Item"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          },
+          "size_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Qty"
+          },
+          "size_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Unit"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "receipt",
+              "photo",
+              "manual",
+              "voice"
+            ],
+            "title": "Source"
+          },
+          "added_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Added At"
+          },
+          "last_bought_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Bought At"
+          },
+          "in_basket": {
+            "type": "boolean",
+            "title": "In Basket",
+            "default": false
+          },
+          "cheapest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Deal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_item_id",
+          "user_id",
+          "item",
+          "source",
+          "added_at"
+        ],
+        "title": "ListItem",
+        "description": "A My List / Basket row. cheapest is what tapping the row opens; null when no flyer has the exact item."
+      },
       "ManualIntake": {
         "properties": {
           "text": {
@@ -846,6 +1242,90 @@
           "text"
         ],
         "title": "ManualIntake"
+      },
+      "PageView": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "title": "Page Id"
+          },
+          "store": {
+            "type": "string",
+            "title": "Store"
+          },
+          "page_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page No"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aspect"
+          },
+          "tiles": {
+            "items": {
+              "$ref": "#/components/schemas/Tile"
+            },
+            "type": "array",
+            "title": "Tiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "store",
+          "tiles"
+        ],
+        "title": "PageView",
+        "description": "One flyer page for the price-match screen: highlight the tile whose item_id is the listing's flyer_item_id."
       },
       "SaveItems": {
         "properties": {
@@ -944,18 +1424,20 @@
         ],
         "title": "StoreTotal"
       },
-      "UserItem": {
+      "Tile": {
         "properties": {
-          "user_item_id": {
+          "item_id": {
             "type": "string",
-            "title": "User Item Id"
+            "title": "Item Id"
           },
-          "user_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "User Id"
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bbox"
           },
-          "brand": {
+          "image_url": {
             "anyOf": [
               {
                 "type": "string"
@@ -964,24 +1446,13 @@
                 "type": "null"
               }
             ],
-            "title": "Brand"
+            "title": "Image Url"
           },
-          "item": {
+          "label": {
             "type": "string",
-            "title": "Item"
+            "title": "Label"
           },
-          "variant": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Variant"
-          },
-          "size_qty": {
+          "price": {
             "anyOf": [
               {
                 "type": "number"
@@ -990,56 +1461,16 @@
                 "type": "null"
               }
             ],
-            "title": "Size Qty"
-          },
-          "size_unit": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Unit"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "receipt",
-              "photo",
-              "manual",
-              "voice"
-            ],
-            "title": "Source"
-          },
-          "added_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Added At"
-          },
-          "last_bought_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Bought At"
+            "title": "Price"
           }
         },
         "type": "object",
         "required": [
-          "user_item_id",
-          "user_id",
-          "item",
-          "source",
-          "added_at"
+          "item_id",
+          "bbox",
+          "label"
         ],
-        "title": "UserItem"
+        "title": "Tile"
       },
       "ValidationError": {
         "properties": {
