@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from apps.api.mock_data import FLYER_ITEMS, SEED_ITEMS
@@ -55,9 +55,13 @@ def flyer_items() -> list[FlyerItem]:
 
     with _flyer_lock:  # one warehouse query per TTL, not one per concurrent request
         if time.monotonic() - _flyer_cache[0] > FLYER_TTL:
+            # Validity is checked here, not in SQL, so this also reads flyer_items built before valid_to existed.
             rows = db.query("SELECT * FROM flyer_items WHERE price IS NOT NULL "
-                            "AND coalesce(valid_to, date_add(week_start, 6)) >= current_date()")
-            _flyer_cache = (time.monotonic(), [FlyerItem(**r) for r in rows])
+                            "AND week_start >= date_sub(current_date(), 30)")
+            today = date.today()
+            items = [FlyerItem(**r) for r in rows]
+            _flyer_cache = (time.monotonic(),
+                            [f for f in items if (f.valid_to or f.week_start + timedelta(days=6)) >= today])
         return _flyer_cache[1]
 
 

@@ -161,6 +161,8 @@ def test_save_uses_a_fixed_number_of_statements(monkeypatch):
 
 
 def test_flyer_items_are_read_once_per_ttl(monkeypatch):
+    from datetime import date
+
     from apps.api import databricks_sql, store
 
     reads = []
@@ -168,11 +170,14 @@ def test_flyer_items_are_read_once_per_ttl(monkeypatch):
            "price": "5.99", "bbox": "[0.1,0.2,0.3,0.4]", "page_no": "3", "valid_to": "2026-11-11"}
     monkeypatch.setattr(store, "MOCK", False)
     monkeypatch.setattr(store, "_flyer_cache", (0.0, []))
-    monkeypatch.setattr(databricks_sql, "query", lambda sql, **p: reads.append(sql) or [row])
+    expired = {**row, "item_id": "old", "valid_to": "2026-10-01"}
+    old_schema = {k: v for k, v in row.items() if k not in ("page_no", "valid_to")} | {"item_id": "f0"}
+    monkeypatch.setattr(databricks_sql, "query", lambda sql, **p: reads.append(sql) or [row, expired, old_schema])
+    monkeypatch.setattr(store, "date", SimpleNamespace(today=lambda: date(2026, 11, 7)))
     first, second = store.flyer_items(), store.flyer_items()
     assert len(reads) == 1 and first is second
     assert first[0].bbox == [0.1, 0.2, 0.3, 0.4] and first[0].page_no == 3  # SQL API strings parsed
-    assert "current_date()" in reads[0]  # only listings still valid today
+    assert [f.item_id for f in first] == ["f1", "f0"]  # expired dropped; no valid_to means week_start + 6
 
 
 def test_patch_and_basket_statements(monkeypatch):
