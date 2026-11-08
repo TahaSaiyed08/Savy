@@ -166,6 +166,8 @@ def saves_vs_next(deals: list[Deal]) -> dict[str, float]:
             if len(c) > 1 and c[1] > c[0]}
 
 
+# Search: what people type is looser than a match. The words must appear, sizes are ignored, and the last word may
+# be half typed. The functions below rank results; none of them excludes an item the words already allow.
 _SIZE_WORD = re.compile(r"\d+(?:\.\d+)?(?:l|ml|g|kg|lb|lbs|oz|ea|ct|pk)?|l|ml|g|kg|lb|lbs|oz|ea|ct|pk|pack|x")
 
 
@@ -186,6 +188,7 @@ def _starts(tokens: frozenset[str], words: frozenset[str]) -> bool:
 def _split_query(q: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
     """(required, preferred): the words that must be found, and numbers like "2%" that only rank listings higher,
     so "2% milk" still finds milk in a week with no 2%."""
+    # Letters-only words are the thing being searched for; words with digits ("2%", "500g") are only a preference.
     required = frozenset(w for w in q if w.isalpha())
     return (required, q - required) if required else (q, frozenset())
 
@@ -206,6 +209,9 @@ def closest(u: UserItem, flyer_items: list[FlyerItem], n: int = 5) -> list[Flyer
     if not required:
         return []
     brand, variant, size = _query_words(u.brand), _query_words(u.variant), size_of(u)
+    # Each candidate gets a tuple of "badness" flags that sort ascending, so the best match is the one with the fewest
+    # misses, checked in priority order: named in the item, is the main noun, exact words, brand, variant, extra
+    # words, size unit, then price.
     ranked = []
     for f in flyer_items:
         words = _listing_words(f)
@@ -229,6 +235,8 @@ def _sort_key(sort: str, q: frozenset[str]):
         # and most widely sold, then cheapest.
         required, preferred = _split_query(q)
 
+        # A search for "ramen" should lead with ramen, not with a sauce that mentions it, so the tuple orders by
+        # how central the word is, then how plain and widely sold the product is.
         def relevance(g: FlyerGroup):
             name = _words(" ".join(p for p in (g.brand, g.item, g.variant) if p))
             item = _words(g.item)
@@ -247,6 +255,7 @@ def _sort_key(sort: str, q: frozenset[str]):
 def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str | None = None,
                   sort: str = "savings", category: str | None = None) -> list[FlyerGroup]:
     """Every priced listing as one row per product with its cheapest store. store limits rows to what it carries."""
+    # Step 1: bucket listings by product so each product is one row, however many stores advertise it.
     groups: dict[tuple, list[FlyerItem]] = {}
     for f in flyer_items:
         if f.price is not None:
@@ -256,6 +265,7 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
     if q and q.strip() and not q_words:  # only a size was typed: nothing to look for
         return []
     needed = _split_query(q_words)[0] if sort == "relevance" else q_words  # relevance only requires the plain words
+    # Step 2: filter each product by category/store/search words and pick its cheapest listing.
     out = []
     for rows in groups.values():
         if category and rows[0].category != category:
@@ -275,6 +285,7 @@ def browse_flyers(flyer_items: list[FlyerItem], q: str | None = None, store: str
     if sort == "relevance" and needed:  # "Soy Sauce, great for ramen" is not a ramen: small print only fills gaps
         named = [g for g in out if _starts(needed, _words(g.item))]
         out = named if len(named) >= 2 else out
+    # Step 3: sort by the chosen order, with name/size tie-breakers so pages never reshuffle between requests.
     primary = _sort_key(sort, q_words)
     out.sort(key=lambda g: (primary(g), g.item.lower(), (g.brand or "").lower(), (g.variant or "").lower(),
                             g.size_qty or 0))
