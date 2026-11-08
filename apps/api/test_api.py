@@ -87,11 +87,14 @@ def test_save_survives_matching_failure(monkeypatch):
         raise RuntimeError("index and flyer_items unavailable")
 
     monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_unmatched", {})
     monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append(sql))
     monkeypatch.setattr(databricks_sql, "query", down)
     monkeypatch.setattr(databricks_sql, "_client", down)
-    saved = store.add_items(uuid.uuid4(), SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
+    uid = uuid.uuid4()
+    saved = store.add_items(uid, SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
     assert len(saved) == 1 and any("INSERT INTO user_items" in s for s in writes)
+    assert store._unmatched[uid][1] == saved  # queued for retry
 
 
 def test_save_uses_a_fixed_number_of_statements(monkeypatch):
@@ -154,6 +157,45 @@ def test_receipt_intake_saves_in_background(monkeypatch):
     monkeypatch.setattr(store, "save_receipt", lambda uid, image, x: saved.append((uid, image, x.store)))
     r = c.post("/intake/receipt", headers=H, files={"file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffx"), "image/jpeg")})
     assert r.status_code == 200 and saved == [(uuid.UUID(H["X-User-Id"]), b"\xff\xd8\xffx", "Save-On-Foods")]
+
+
+def test_failed_matching_is_retried_on_next_deals(monkeypatch):
+    import json
+
+    from apps.api import databricks_sql, store
+    from apps.api.models import SaveItems
+
+    up, writes = {"db": False}, []
+
+    def query(sql, **p):
+        if "inline" not in sql:
+            return []  # the my_deals read
+        if not up["db"]:
+            raise RuntimeError("warehouse down")
+        return [{"user_item_id": r["user_item_id"], "item_id": "f1", "brand": None} for r in json.loads(p["rows"])]
+
+    def no_index():
+        raise RuntimeError("no AI Search index")
+
+    monkeypatch.setattr(store, "MOCK", False)
+    monkeypatch.setattr(store, "_unmatched", {})
+    monkeypatch.setattr(databricks_sql, "execute", lambda sql, **p: writes.append((sql, p)))
+    monkeypatch.setattr(databricks_sql, "query", query)
+    monkeypatch.setattr(databricks_sql, "_client", no_index)
+    uid = uuid.uuid4()
+    saved = store.add_items(uid, SaveItems(source="manual", items=[{"item": "milk", "confidence": 0.9}]))
+    assert uid in store._unmatched
+
+    store.list_deals(uid)  # still down: kept, and backed off so the next call doesn't retry
+    assert store._unmatched[uid][1] == saved and not any("user_item_matches" in s for s, _ in writes)
+
+    up["db"] = True
+    monkeypatch.setattr(store, "RETRY_AFTER", 0.0)
+    store._unmatched[uid] = (0.0, saved)
+    store.list_deals(uid)
+    inserted = [json.loads(p["rows"]) for s, p in writes if "user_item_matches" in s]
+    assert inserted == [[{"user_item_id": saved[0].user_item_id, "flyer_item_id": "f1", "match_score": 0.75}]]
+    assert uid not in store._unmatched and "NOT EXISTS" in next(s for s, _ in writes if "user_item_matches" in s)
 
 
 def test_unknown_extractor_is_rejected(monkeypatch):

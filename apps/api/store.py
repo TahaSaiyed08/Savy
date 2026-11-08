@@ -3,6 +3,8 @@ import io
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
@@ -61,9 +63,39 @@ def _match_and_store(items: list[UserItem]) -> None:
         if float(score) >= logic.MATCH_THRESHOLD and not (u.brand and (brand or "").lower() != u.brand.lower())
     ]
     if matches:
-        db.execute(
-            "INSERT INTO user_item_matches SELECT user_item_id, flyer_item_id, match_score, current_timestamp() "
-            f"FROM (SELECT inline(from_json(:rows, '{_MATCH_ROWS}')))", rows=json.dumps(matches))
+        db.execute(  # idempotent, so a retry after a partial or timed-out attempt can't duplicate rows
+            "INSERT INTO user_item_matches SELECT s.user_item_id, s.flyer_item_id, s.match_score, current_timestamp() "
+            f"FROM (SELECT inline(from_json(:rows, '{_MATCH_ROWS}'))) s WHERE NOT EXISTS (SELECT 1 FROM "
+            "user_item_matches m WHERE m.user_item_id = s.user_item_id AND m.flyer_item_id = s.flyer_item_id)",
+            rows=json.dumps(matches))
+
+
+# Items whose matching failed, retried on the user's next /deals or /basket. Process memory, so a restart drops
+# them; the weekly re-match (plan WS2 step 8) is the durable sweep.
+RETRY_AFTER = 60.0
+_unmatched: dict[UUID, tuple[float, list[UserItem]]] = {}
+_unmatched_lock = threading.Lock()
+
+
+def _queue_rematch(user_id: UUID, items: list[UserItem], delay: float = 0.0) -> None:
+    """delay=0 retries on the next /deals; a failed retry backs off RETRY_AFTER so an outage doesn't slow every call."""
+    with _unmatched_lock:
+        _, pending = _unmatched.get(user_id, (0.0, []))
+        _unmatched[user_id] = (time.monotonic() + delay, pending + items)
+
+
+def _retry_rematch(user_id: UUID) -> None:
+    now = time.monotonic()
+    with _unmatched_lock:
+        due, pending = _unmatched.get(user_id, (0.0, []))
+        if not pending or now < due:
+            return
+        del _unmatched[user_id]  # claimed, so concurrent requests don't retry the same items
+    try:
+        _match_and_store(pending)
+    except Exception:
+        log.warning("re-match failed for %d items; will retry", len(pending), exc_info=True)
+        _queue_rematch(user_id, pending, RETRY_AFTER)
 
 
 def _search(u: UserItem) -> list[tuple] | None:
@@ -141,8 +173,9 @@ def add_items(user_id: UUID, req: SaveItems) -> list[UserItem]:
             w.result()  # a failed write must surface
         try:
             matching.result()
-        except Exception:  # the items are saved; they show "no deal" until the weekly re-match
+        except Exception:  # the items are saved; matching is retried on the user's next /deals or /basket
             log.warning("matching failed; saved %d items without matches", len(new), exc_info=True)
+            _queue_rematch(user_id, new)
     return new
 
 
@@ -179,6 +212,7 @@ def list_deals(user_id: UUID) -> list[Deal]:
         return logic.deals_for(_mock_items(user_id), FLYER_ITEMS)
     from apps.api import databricks_sql as db
 
+    _retry_rematch(user_id)
     rows = db.query(
         "SELECT d.*, concat_ws(' ', u.brand, u.item, u.variant) AS item_label, "
         "concat_ws(' ', f.brand, f.item, f.variant) AS flyer_label, f.unit "
