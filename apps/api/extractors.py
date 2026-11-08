@@ -32,6 +32,9 @@ class ClaudeExtractor:
     def __init__(self) -> None:
         import anthropic
 
+        # The SDK only complains about a missing key on the first request; fail at startup instead.
+        if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+            raise RuntimeError("EXTRACTOR=claude needs ANTHROPIC_API_KEY")
         self.client = anthropic.Anthropic()
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
@@ -95,6 +98,11 @@ class MockExtractor:
         ])
 
 
+_EXTRACTORS = {"mock": MockExtractor, "claude": ClaudeExtractor, "databricks": DatabricksAIExtractor}
+
+
 def get_extractor() -> Extractor:
     choice = os.getenv("EXTRACTOR") or ("claude" if os.getenv("ANTHROPIC_API_KEY") else "mock")
-    return {"claude": ClaudeExtractor, "databricks": DatabricksAIExtractor, "mock": MockExtractor}[choice]()
+    if choice not in _EXTRACTORS:
+        raise ValueError(f"EXTRACTOR={choice!r} is not one of: {', '.join(_EXTRACTORS)}")
+    return _EXTRACTORS[choice]()

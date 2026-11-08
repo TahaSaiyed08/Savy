@@ -2,12 +2,14 @@ import io
 import uuid
 from types import SimpleNamespace
 
+import anthropic
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from apps.api import logic
-from apps.api.extractors import ClaudeExtractor, sniff_media_type
+from apps.api.extractors import ClaudeExtractor, get_extractor, sniff_media_type
 from apps.api.main import app
 from apps.api.mock_data import FLYER_ITEMS
 from apps.api.models import Extraction
@@ -73,6 +75,48 @@ def test_heic_is_rejected_before_any_paid_call():
     with pytest.raises(HTTPException) as e:
         ext.extract("receipt", image=HEIC, media_type="image/heic")
     assert e.value.status_code == 415 and not calls
+
+
+def test_unknown_extractor_is_rejected(monkeypatch):
+    monkeypatch.setenv("EXTRACTOR", "gpt")
+    with pytest.raises(ValueError, match="mock, claude, databricks"):
+        get_extractor()
+
+
+def test_bad_extractor_config_fails_at_startup(monkeypatch):
+    monkeypatch.setenv("EXTRACTOR", "claude")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"), TestClient(app):
+        pass
+
+
+def test_health_reports_extractor(monkeypatch):
+    monkeypatch.delenv("EXTRACTOR", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert c.get("/health").json()["extractor"] == "MockExtractor"
+
+
+class _Failing:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def extract(self, mode, **kw):
+        raise self.exc
+
+
+@pytest.mark.parametrize("exc, status", [
+    (anthropic.APIStatusError("overloaded", response=httpx.Response(
+        529, request=httpx.Request("POST", "https://api.anthropic.com")), body=None), 502),
+    (RuntimeError("extraction failed: stop_reason=refusal"), 422),
+])
+def test_extractor_failures_become_client_errors(exc, status):
+    app.dependency_overrides[get_extractor] = lambda: _Failing(exc)
+    try:
+        r = c.post("/intake/manual", headers=H, json={"text": "milk"})
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == status, r.text
 
 
 def test_voice_uses_mock_transcript():
