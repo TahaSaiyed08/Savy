@@ -771,6 +771,17 @@
               }
             ],
             "title": "Bought At"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
           }
         },
         "type": "object",

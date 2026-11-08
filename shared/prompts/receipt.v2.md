@@ -3,7 +3,7 @@ First read the store name and purchase date from the header. Then extract every 
 Receipt lines are abbreviated: expand them using the store context, e.g. "PC CHKN THGH BNLS 1KG" -> brand "PC", item "chicken thigh", variant "boneless", size_qty 1, size_unit "kg".
 Skip subtotal, tax, deposit, bottle return, bag fee, discount and payment lines.
 A promotion line under a product (e.g. "$24.99 lmt 4, $29.99 ea" then "1 @ $24.99 ea") is not a separate item: use the price actually charged for that product.
-Also return at the top level: "store" (string or null) and "bought_at" (ISO date or null).
+Also return at the top level: "store" (string or null), "bought_at" (ISO date or null) and "total" (number or null, the final TOTAL paid in CAD including tax, not the subtotal).
 Return ONLY a JSON object of the form {"items": [ ... ]} where each item has:
 - brand: string or null, the parent brand exactly as grocery flyers print it (e.g. "PC", "Kraft", "Kirkland"); null for produce and generic items
 - item: string, the product noun in plain English, singular (e.g. "chicken thigh", "milk")
