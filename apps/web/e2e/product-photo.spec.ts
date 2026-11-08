@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-// Product photo -> "Which one is it?" chip picker over the extractor's candidates -> add -> in My List.
-test("product photo: pick a candidate, add to My List", async ({ page }) => {
+// Product photo -> "Which one is it?" chip picker over the extractor's candidates -> add -> in Pantry.
+test("product photo: pick a candidate, add to Pantry", async ({ page }) => {
   await page.goto("/list");
 
   await page.getByRole("button", { name: "Add item" }).click();

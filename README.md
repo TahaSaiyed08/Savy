@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:248A3D,100:30D158&height=160&section=header&text=Real%20Deal&fontSize=50&fontColor=ffffff&animation=fadeIn" width="100%" alt="Real Deal" />
+</p>
+
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&size=20&pause=1200&color=30D158&center=true&vCenter=true&width=640&lines=Weekly+flyers+from+5+Vancouver+chains;Matched+to+what+you+actually+buy;Cheapest+store+for+your+whole+basket;Built+on+Databricks+%2B+Claude" alt="Weekly flyers from 5 Vancouver chains, matched to what you actually buy, cheapest store for your whole basket, built on Databricks + Claude" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" width="300" alt="Demo: My List populated, adding 2% milk 4 L by typing it, the parsed confirm screen, the item landing back in My List, matched in Deals, and the Basket split-shop view" />
+</p>
+
 # Real Deal
 
 Weekly grocery flyers from five Vancouver chains, matched to what a UBC student actually buys (learned from their

@@ -31,6 +31,25 @@ describe("intakeErrorMessage", () => {
   it("falls back to the generic message for any other status", () => {
     expect(intakeErrorMessage(new Response(null, { status: 500 }))).toBe("Couldn't read that — try again");
   });
+
+  it("gives voice its own advice for silence (422) and a speech-service outage (502)", () => {
+    expect(intakeErrorMessage(new Response(null, { status: 422 }), "voice")).toBe(
+      "Didn't catch that — hold the button and speak",
+    );
+    expect(intakeErrorMessage(new Response(null, { status: 502 }), "voice")).toBe(
+      "Voice isn't working right now — type it instead",
+    );
+  });
+
+  it("keeps the generic message for 422/502 from photo and typed intake", () => {
+    expect(intakeErrorMessage(new Response(null, { status: 422 }))).toBe("Couldn't read that — try again");
+    expect(intakeErrorMessage(new Response(null, { status: 502 }))).toBe("Couldn't read that — try again");
+  });
+
+  it("uses the shared messages for other voice statuses and network errors", () => {
+    expect(intakeErrorMessage(new Response(null, { status: 429 }), "voice")).toBe("Too many scans — try again later");
+    expect(intakeErrorMessage(undefined, "voice")).toBe("Couldn't read that — try again");
+  });
 });
 
 describe("intakeController", () => {

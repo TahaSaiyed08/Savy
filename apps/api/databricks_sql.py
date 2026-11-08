@@ -46,8 +46,12 @@ def _run(sql: str, params: dict) -> list[dict]:
     return [dict(zip(cols, row, strict=True)) for row in (r.result.data_array or [])]
 
 
-def query(sql: str, **params) -> list[dict]:
-    """Read. Falls back to the last good result for the same query if Databricks is slow or down."""
+def query(sql: str, *, fresh: bool = False, **params) -> list[dict]:
+    """Read. Falls back to the last good result for the same query if Databricks is slow or down.
+
+    fresh=True raises instead: for callers that act on the rows (matching, the re-match sweep), where an old
+    snapshot would be recorded as done.
+    """
     key = (sql, tuple(sorted(params.items())))
     try:
         _last_good[key] = rows = _run(sql, params)
@@ -56,7 +60,7 @@ def query(sql: str, **params) -> list[dict]:
             _last_good.popitem(last=False)
         return rows
     except Exception:
-        if key in _last_good:
+        if key in _last_good and not fresh:
             log.warning("serving cached result for %s", sql[:60], exc_info=True)
             return _last_good[key]
         raise
