@@ -38,9 +38,13 @@ from apps.api.models import (
 log = logging.getLogger(__name__)
 
 
+# The API starts in one of two worlds. MOCK (the default, no Databricks needed) serves flyers from memory, filled
+# from live Flipp feeds or canned data; otherwise it reads everything from Databricks tables. `store.MOCK` is the
+# switch every endpoint below checks.
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_extractor()  # a bad EXTRACTOR or a missing key fails at boot, not on the first upload
+    # Only the in-memory world keeps its own flyers fresh: a background loop re-downloads when a feed gets stale.
     keeper = asyncio.create_task(flyers_live.keep_fresh()) if store.MOCK else None
     yield
     if keeper:
@@ -49,6 +53,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
 MAX_UPLOAD = 10 * 1024 * 1024
+# Any item the model is less than 60% sure of makes the whole result "needs_confirm", so the app shows a review sheet
+# instead of saving silently.
 CONFIRM_BELOW = 0.6
 
 # Intake calls paid APIs (Anthropic, ElevenLabs) and the app has no login, so cap them per client and globally.
@@ -57,6 +63,8 @@ CONFIRM_BELOW = 0.6
 INTAKE_LIMIT = int(os.getenv("INTAKE_LIMIT_PER_HOUR", "30"))
 INTAKE_GLOBAL_LIMIT = int(os.getenv("INTAKE_GLOBAL_LIMIT_PER_HOUR", "300"))  # backstop on total spend
 _WINDOW = 3600.0
+# A sliding window: each client (and everyone together) keeps the timestamps of recent accepted calls, and a call is
+# refused once the last hour holds too many of them.
 _hits: dict[str, deque[float]] = {}
 _global: deque[float] = deque()
 
@@ -82,10 +90,12 @@ async def rate_limit(request: Request) -> None:
     q = _hits.get(key, deque())
     _prune(q, now)
     _prune(_global, now)
+    # Whichever limit is hit first decides the Retry-After: this client's own, or the app-wide spend cap.
     full = q if len(q) >= INTAKE_LIMIT else _global if len(_global) >= INTAKE_GLOBAL_LIMIT else None
     if full is not None:
         retry = str(int(_WINDOW - (now - full[0])) + 1)
         raise HTTPException(429, "Too many uploads; try again later", {"Retry-After": retry})
+    # Recorded only after both checks pass, so refused calls don't extend the person's own wait.
     q.append(now)
     _global.append(now)
     _hits[key] = q  # only accepted calls create entries, so memory is bounded by the global cap
