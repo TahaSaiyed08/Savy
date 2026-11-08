@@ -46,6 +46,23 @@ def normalize_unit(text: str) -> Size | None:
     return None
 
 
+def size_from(qty: float | None, unit: str | None) -> Size | None:
+    """A (size_qty, size_unit) pair as a Size: (12, 'ea') -> 12 ea, (4, 'l') -> 4000 ml. None if missing/unreadable."""
+    if not qty or not unit:
+        return None
+    s = Size(float(qty), "ea") if unit.lower() == "ea" else normalize_unit(f"{qty:g} {unit}")
+    return s if s and s.qty > 0 else None
+
+
+def per_weight(text: str) -> bool:
+    """'$3.99/lb', 'per kg': sold by weight, so any amount of it is the same listing.
+
+    Not when a fixed weight is also printed ('1 kg pack $13.21/kg'): that pack only comes in one size.
+    """
+    m = _PER.search(text)
+    return bool(m) and _FACTORS[m[1].lower()][1] == "g" and not _QTY.search(text)
+
+
 def unit_price(price: float, size: Size | None) -> tuple[float, str] | None:
     """Price per 100 g / 100 mL / each, the basis every store comparison uses."""
     if size is None or size.qty <= 0:

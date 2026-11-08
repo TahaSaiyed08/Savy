@@ -56,10 +56,12 @@ export default function Basket() {
 
       {b?.cheapest_store && bestStore && (
         <>
-          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-separator bg-elevated p-5 shadow-card">
+          <div className="mx-4 mb-6 flex flex-col gap-3 rounded-[20px] border border-tint/25 bg-gradient-to-br from-savings-bg to-elevated p-5 shadow-card">
             <div className="flex items-center justify-between">
               <p className="text-[13px] font-medium tracking-wide text-label-2 uppercase">Best single store</p>
-              <CircleCheck size={20} className="text-tint" />
+              <span className="flex size-6 items-center justify-center rounded-full bg-tint text-white">
+                <CircleCheck size={16} />
+              </span>
             </div>
             <p className="text-[28px] font-bold">{b.cheapest_store}</p>
             <p className="text-[34px] font-bold text-tint">{money(bestStore.total)}</p>
