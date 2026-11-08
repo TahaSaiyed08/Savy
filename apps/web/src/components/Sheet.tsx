@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** HIG bottom sheet: grabber, nav bar (Cancel / title / optional action), backdrop dismiss, Esc to close. */
 export function Sheet({
@@ -23,17 +25,48 @@ export function Sheet({
   tall?: boolean;
   children: ReactNode;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const restoreFocusTo = useRef<HTMLElement | null>(null);
+  // Several callers pass a fresh `onClose` arrow function on every render (e.g. TypeOrSaySheet re-renders
+  // on every keystroke); depending on it directly would re-run this effect — and re-steal focus to Cancel
+  // — on every keystroke. A ref keeps the handler current without that.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusables = panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (!focusables || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      // Keep Tab cycling inside the sheet, so keyboard focus can't land on content behind it.
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
+    restoreFocusTo.current = document.activeElement as HTMLElement | null;
+    panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      restoreFocusTo.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -41,6 +74,7 @@ export function Sheet({
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
+        ref={panelRef}
         className={`absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-xl flex-col overflow-hidden rounded-t-[24px] bg-bg shadow-sheet ${
           tall ? "top-[6vh] max-h-[94vh]" : "max-h-[85vh]"
         }`}
