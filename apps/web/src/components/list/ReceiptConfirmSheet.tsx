@@ -1,18 +1,65 @@
 "use client";
 // Confirm-items sheet: low-confidence lines ("CHECK THESE") always need a look and route to the edit
 // form; everything else ("LOOKS RIGHT") is pre-selected with a tap-to-exclude checkmark, per the design.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sheet } from "@/components/Sheet";
-import { InlineError, PrimaryButton } from "@/components/ui";
+import { InlineError, PrimaryButton, money } from "@/components/ui";
 import { CircleCheck, TriangleAlert } from "@/components/icons";
 import { ItemEditor, draftFrom, draftToItem, type ItemDraft } from "@/components/ItemEditor";
-import type { Schemas } from "@/lib/api";
+import { api, type Schemas } from "@/lib/api";
+import { fullName } from "@/lib/format";
 
 const CONFIRM_BELOW = 0.6;
 
 function label(it: Schemas["ExtractedItem"]) {
   const size = it.size_qty && it.size_unit ? ` · ${it.size_qty} ${it.size_unit}` : "";
   return `${[it.brand, it.item, it.variant].filter(Boolean).join(" ")}${size}`;
+}
+
+type Similar = Schemas["FlyerGroup"];
+
+/**
+ * For each scanned line, the cheapest similar item on sale right now. It is the Flyers tab's own search, so it follows
+ * the same ranking, and it looks at the product name only: a receipt rarely has the brand or size a flyer prints.
+ * Looked up once per name (a cache), so editing a line does not repeat the others.
+ */
+function useSimilarDeals(items: Schemas["ExtractedItem"][]) {
+  const cache = useRef(new Map<string, Similar | null>());
+  const mounted = useRef(true);
+  const [, refresh] = useState(0);
+  const key = (it: Schemas["ExtractedItem"]) => it.item.trim().toLowerCase();
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const todo = [...new Set(items.map(key))].filter((q) => q && !cache.current.has(q));
+    if (todo.length === 0) return;
+    Promise.all(
+      todo.map((q) =>
+        api
+          .GET("/flyer-items", { params: { query: { q, sort: "relevance", page_size: 1 } } })
+          .then(({ data }) => cache.current.set(q, data?.items[0] ?? null))
+          .catch(() => cache.current.set(q, null)), // a failed lookup just shows no line; it is never an error
+      ),
+    ).then(() => mounted.current && refresh((n) => n + 1));
+  }, [items]);
+
+  return (it: Schemas["ExtractedItem"]) => cache.current.get(key(it)) ?? null;
+}
+
+function SimilarDeal({ deal }: { deal: Similar | null }) {
+  if (!deal) return null;
+  const { cheapest } = deal;
+  return (
+    <p className="truncate text-[13px] font-medium text-savings-text">
+      On sale: {fullName(deal)} · {money(cheapest.price)} at {cheapest.store}
+    </p>
+  );
 }
 
 export function ReceiptConfirmSheet({
@@ -37,6 +84,7 @@ export function ReceiptConfirmSheet({
   const [selected, setSelected] = useState<Set<number>>(() => new Set(extraction.items.map((_, i) => i)));
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
+  const similarTo = useSimilarDeals(items);
 
   function startEdit(i: number) {
     setEditingIndex(i);
@@ -103,7 +151,10 @@ export function ReceiptConfirmSheet({
             <div className="overflow-hidden rounded-[16px] border border-warning-border bg-warning-bg shadow-card">
               {low.map(({ it, i }) => (
                 <div key={i} className="flex items-center gap-2 border-b border-warning-border px-3.5 py-3 last:border-b-0">
-                  <p className="min-w-0 flex-1 truncate text-[17px] font-semibold text-label">{label(it)}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[17px] font-semibold text-label">{label(it)}</p>
+                    <SimilarDeal deal={similarTo(it)} />
+                  </div>
                   <button type="button" onClick={() => startEdit(i)} className="flex h-tap items-center text-[17px] text-tint">
                     Edit
                   </button>
@@ -124,10 +175,13 @@ export function ReceiptConfirmSheet({
                   key={i}
                   type="button"
                   onClick={() => toggle(i)}
-                  className="flex h-12 w-full items-center gap-3 border-b border-separator px-3.5 last:border-b-0"
+                  className="flex min-h-12 w-full items-center gap-3 border-b border-separator px-3.5 py-2 last:border-b-0"
                 >
-                  <CircleCheck size={22} className={selected.has(i) ? "text-tint" : "text-label-2/40"} />
-                  <p className="min-w-0 flex-1 truncate text-left text-[17px]">{label(it)}</p>
+                  <CircleCheck size={22} className={selected.has(i) ? "shrink-0 text-tint" : "shrink-0 text-label-2/40"} />
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="truncate text-[17px]">{label(it)}</p>
+                    <SimilarDeal deal={similarTo(it)} />
+                  </div>
                 </button>
               ))}
             </div>
