@@ -1,6 +1,7 @@
 """The Gemini extractor, with Google's API replaced by a function we control (no network, no key)."""
 import base64
 import json
+import time
 
 import httpx
 import pytest
@@ -25,11 +26,16 @@ def gemini(monkeypatch):
     """A GeminiExtractor whose calls are recorded and answered from `answers` (one per call, in order)."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    monkeypatch.setattr(GeminiExtractor, "_cooling", {})  # models that failed recently are skipped: start with none
     sent, answers = [], []
 
     def post(url, headers=None, json=None, timeout=None):
-        sent.append({"url": url, "headers": headers, "body": json})
-        return answers.pop(0) if len(answers) > 1 else answers[0]
+        sent.append({"url": url, "headers": headers, "body": json, "timeout": timeout})
+        answer = answers.pop(0) if len(answers) > 1 else answers[0]
+        if isinstance(answer, Exception):
+            raise answer  # a stall: the call times out instead of answering
+        return answer
 
     monkeypatch.setattr(extractors.httpx, "post", post)
     monkeypatch.setattr(extractors.time, "sleep", lambda s: None)
@@ -66,10 +72,84 @@ def test_an_unsupported_image_is_a_415_before_any_call_is_made(gemini):
     assert e.value.status_code == 415 and gemini.sent == []
 
 
-def test_a_busy_gemini_is_retried_once_then_answers(gemini):
-    gemini.answers += [_reply("", 503), _reply(ITEMS)]
+def _model(call):
+    return call["url"].split("/models/")[1].split(":")[0]
+
+
+# the default chain: the main model, then these three lighter ones in order
+MAIN, FIRST = "gemini-3.5-flash", "gemini-3.5-flash-lite"
+SECOND, THIRD = "gemini-flash-lite-latest", "gemini-3.1-flash-lite"
+
+
+def test_a_model_out_of_quota_is_answered_by_the_next_one_in_the_chain(gemini):
+    gemini.answers += [_reply("", 429), _reply(ITEMS)]
     assert gemini.extract("manual", text="milk").items[0].item == "milk"
-    assert len(gemini.sent) == 2
+    assert [_model(c) for c in gemini.sent] == [MAIN, FIRST]
+
+
+def test_each_model_in_the_chain_is_tried_in_order_until_one_answers(gemini):
+    gemini.answers += [_reply("", 429), _reply("", 503), _reply(ITEMS)]
+    gemini.extract("manual", text="milk")
+    assert [_model(c) for c in gemini.sent] == [MAIN, FIRST, SECOND]
+
+
+def test_a_stalled_main_model_is_given_up_on_quickly_and_a_lighter_one_answers(gemini):
+    gemini.answers += [httpx.ReadTimeout("stalled"), _reply(ITEMS)]
+    assert gemini.extract("manual", text="milk").items[0].item == "milk"
+    first, second = gemini.sent
+    assert (_model(first), first["timeout"]) == (MAIN, GeminiExtractor.TIMEOUT)
+    assert (_model(second), second["timeout"]) == (FIRST, GeminiExtractor.FALLBACK_TIMEOUT)
+
+
+def test_when_every_model_fails_it_reports_the_last_status_after_trying_them_all(gemini):
+    gemini.answers.append(_reply("", 429))
+    with pytest.raises(ExtractionServiceError, match="429"):
+        gemini.extract("manual", text="milk")
+    assert [_model(c) for c in gemini.sent] == [MAIN, FIRST, SECOND, THIRD]
+
+
+def test_a_model_that_just_failed_is_skipped_by_the_next_scan(gemini):
+    gemini.answers += [_reply("", 429), _reply(ITEMS), _reply(ITEMS)]
+    gemini.extract("manual", text="milk")  # the main model is out of quota; the first fallback answers
+    gemini.extract("manual", text="eggs")  # so this scan does not even ask the main model
+    assert [_model(c) for c in gemini.sent] == [MAIN, FIRST, FIRST]
+
+
+def test_the_skip_ends_after_the_cooldown(gemini, monkeypatch):
+    gemini.answers += [_reply("", 503), _reply(ITEMS), _reply(ITEMS)]
+    gemini.extract("manual", text="milk")
+    clock = [time.monotonic() + GeminiExtractor.COOLDOWN[503] + 1]
+    monkeypatch.setattr(extractors.time, "monotonic", lambda: clock[0])
+    gemini.extract("manual", text="eggs")  # a minute later the main model is asked again
+    assert [_model(c) for c in gemini.sent] == [MAIN, FIRST, MAIN]
+
+
+def test_if_every_model_is_cooling_they_are_all_tried_anyway(gemini):
+    for m in (MAIN, FIRST, SECOND, THIRD):
+        GeminiExtractor._cooling[m] = time.monotonic() + 600
+    gemini.answers.append(_reply(ITEMS))
+    assert gemini.extract("manual", text="milk").items[0].item == "milk"
+    assert [_model(c) for c in gemini.sent] == [MAIN]  # still starts with the main model, and it answered
+
+
+def test_the_fallbacks_are_a_comma_separated_list_and_never_include_the_main_model(gemini, monkeypatch):
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", " gemini-a , gemini-b,, gemini-3.5-flash ")
+    assert GeminiExtractor().fallbacks == ["gemini-a", "gemini-b"]
+
+
+def test_with_no_fallback_the_main_model_is_simply_tried_again(gemini, monkeypatch):
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "")
+    ext = GeminiExtractor()
+    gemini.answers += [_reply("", 503), _reply(ITEMS)]
+    ext.extract("manual", text="milk")
+    assert [_model(c) for c in gemini.sent] == ["gemini-3.5-flash", "gemini-3.5-flash"]
+
+
+def test_a_bad_request_or_key_is_not_retried(gemini):
+    gemini.answers.append(_reply("", 400))
+    with pytest.raises(ExtractionServiceError, match="400"):
+        gemini.extract("manual", text="milk")
+    assert len(gemini.sent) == 1
 
 
 def test_an_http_error_is_a_service_error_that_never_leaks_the_key(gemini):
@@ -111,6 +191,10 @@ def test_setup_mistakes_fail_at_startup(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setenv("GEMINI_MODEL", "x/../../y")  # the name goes into the URL
     with pytest.raises(ValueError, match="GEMINI_MODEL"):
+        GeminiExtractor()
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "gemini-ok,../evil")
+    with pytest.raises(ValueError, match="GEMINI_FALLBACK_MODEL"):
         GeminiExtractor()
 
 

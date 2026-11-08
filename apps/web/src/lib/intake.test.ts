@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { intakeController, intakeErrorMessage } from "./intake";
+import { RECEIPT_TIMEOUT_MS, intakeController, intakeErrorMessage } from "./intake";
 
 describe("intakeErrorMessage", () => {
   it("falls back to a generic message with no response (network error / offline)", () => {
@@ -75,6 +75,17 @@ describe("intakeController", () => {
     vi.advanceTimersByTime(30_000);
     expect(ctl.signal.aborted).toBe(true);
     expect(ctl.wasCancelled()).toBe(false); // a timeout isn't a user cancel
+    vi.useRealTimers();
+  });
+
+  it("takes a longer timeout for slow calls: a receipt outlives the usual 30 s but not its own limit", () => {
+    vi.useFakeTimers();
+    const ctl = intakeController(RECEIPT_TIMEOUT_MS);
+    vi.advanceTimersByTime(30_000);
+    expect(ctl.signal.aborted).toBe(false); // still waiting: the model may just be busy
+    vi.advanceTimersByTime(RECEIPT_TIMEOUT_MS - 30_000);
+    expect(ctl.signal.aborted).toBe(true);
+    expect(ctl.wasCancelled()).toBe(false);
     vi.useRealTimers();
   });
 

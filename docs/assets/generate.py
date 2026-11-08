@@ -175,7 +175,7 @@ def banner():
         '<circle cx="-44" cy="22" r="4.5" fill="#06311D"/>'
         '<text x="6" y="31" text-anchor="middle" font-size="24" font-weight="900" fill="#3B2A00">$3.99</text></g></g></g>'
         '<text x="640" y="352" text-anchor="middle" font-size="17" font-weight="700" letter-spacing="3" fill="#BFF5CF" fill-opacity=".9">'
-        'HACKCAMP 2026  ·  DATABRICKS  ·  GEMINI  ·  ELEVENLABS  ·  FIGMA  ·  FREEBUFF</text>'
+        'HACKCAMP 2026  ·  DATABRICKS  ·  GEMINI  ·  ELEVENLABS  ·  FIGMA</text>'
     )
     return svg(w, h, body, css, defs)
 
@@ -257,7 +257,7 @@ def phone_demo():
 
 BRICKS = [
     # row (0 = bottom), col, span, label, sublabel
-    (0, 0, 1, "Flipp → Unity Catalog", "live flyers, synced"),
+    (0, 0, 1, "Flyers → Unity Catalog", "live flyers, synced"),
     (0, 1, 1, "Volumes", "pages and receipts"),
     (0, 2, 1, "Lakeflow", "Bronze → Silver → Gold"),
     (1, 0, 1, "SQL Statement API", "every read and write"),
@@ -482,8 +482,8 @@ def devpost():
 .btn{animation:btn 9s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
 @keyframes btn{0%,76%{transform:scale(1)}82%{transform:scale(.94)}88%,100%{transform:scale(1)}}
 """
-    tags = ["Databricks", "Genie", "Gemini", "ElevenLabs", "Figma", "Freebuff", "Claude", "Next.js", "FastAPI", "Flipp"]
-    colors = ["#FF3621", "#FF6A4D", "#6E9BFF", "#8B6CFF", "#A259FF", "#35D0A0", "#D97757", "#EDEDED", "#10B981", "#FFC83D"]
+    tags = ["Databricks", "Genie", "Gemini", "ElevenLabs", "Figma", "Claude", "Next.js", "FastAPI"]
+    colors = ["#FF3621", "#FF6A4D", "#6E9BFF", "#8B6CFF", "#A259FF", "#D97757", "#EDEDED", "#10B981"]
     pills, px, py = "", 470, 80
     for i, (t, c) in enumerate(zip(tags, colors, strict=True)):
         pw = 44 + len(t) * 12
@@ -572,54 +572,6 @@ def gemini():
     return svg(w, h, body, css, defs)
 
 
-# --- Freebuff: a terminal working through a change -----------------------------------------------------------------
-
-
-def freebuff():
-    w, h = 1280, 420
-    c_defs, c_body = card(w, h, "#07130F", "#0F2A21", "#35D0A0")
-    css = """
-.row{opacity:0;animation:row 10s ease-in-out infinite}
-@keyframes row{0%,4%{opacity:0;transform:translateX(-12px)}10%,86%{opacity:1;transform:none}94%,100%{opacity:0}}
-.tick{opacity:0;animation:tick 10s ease-in-out infinite}
-@keyframes tick{0%,14%{opacity:0;transform:scale(.4)}20%,86%{opacity:1;transform:scale(1)}94%,100%{opacity:0}}
-.spin{transform-box:fill-box;transform-origin:center;animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.busy{opacity:0;animation:busy 10s ease-in-out infinite}
-@keyframes busy{0%,4%{opacity:0}10%,14%{opacity:1}20%,100%{opacity:0}}
-.caret{animation:caret 1s steps(1) infinite}
-@keyframes caret{0%,50%{opacity:1}51%,100%{opacity:0}}
-.typed{animation:typed 10s steps(26) infinite}
-"""
-    steps = ["Read the repo", "Plan the change", "Edit the files", "Run the tests"]
-    rows = ""
-    for i, st in enumerate(steps):
-        y = 204 + i * 42
-        d = f"animation-delay:{1.0 + i * 1.5:.2f}s"
-        rows += (
-            f'<g class="row" style="{d}"><text x="520" y="{y}" font-size="22" font-weight="600" fill="#D8F5EA">{st}</text>'
-            f'<g class="busy" style="{d}"><path class="spin" d="M486 {y - 18}a9 9 0 1 1-9 9" fill="none" stroke="#35D0A0" stroke-width="3" stroke-linecap="round"/></g>'
-            f'<g class="tick" style="{d}"><circle cx="486" cy="{y - 8}" r="11" fill="#35D0A0"/><path d="M480 {y - 8}l4 4 8-9" fill="none" stroke="#06231A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g></g>'
-        )
-    body = (
-        c_body
-        + '<g transform="translate(70,76)"><rect width="64" height="64" rx="16" fill="#35D0A0"/>'
-        '<path d="M20 22l14 10-14 10" fill="none" stroke="#06231A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>'
-        '<rect x="38" y="42" width="12" height="6" rx="3" fill="#06231A"/></g>'
-        + '<text x="70" y="212" font-size="52" font-weight="800" fill="#fff" letter-spacing="-1">Freebuff</text>'
-        + '<text x="70" y="260" font-size="22" font-weight="600" fill="#9CEBD0">Our coding agent at HackCamp.</text>'
-        + '<g font-size="17" font-weight="500" fill="#CDEFE3"><text x="70" y="310">One of the tools we built Savy with,</text>'
-        '<text x="70" y="338">alongside Claude Code.</text></g>'
-        + '<g transform="translate(440,56)"><rect width="780" height="306" rx="16" fill="#04100C" stroke="#35D0A0" stroke-opacity=".35" stroke-width="1.5"/>'
-        '<circle cx="26" cy="26" r="6" fill="#FF5F57"/><circle cx="48" cy="26" r="6" fill="#FEBC2E"/><circle cx="70" cy="26" r="6" fill="#28C840"/>'
-        '<text x="390" y="31" text-anchor="middle" font-size="14" font-weight="600" fill="#6FAE99">freebuff</text>'
-        '<text x="40" y="82" font-size="24" font-weight="700" fill="#35D0A0">›</text>'
-        '<text x="68" y="82" font-size="22" font-weight="600" fill="#fff" font-family="ui-monospace, Menlo, Consolas, monospace">build it, check it, ship it</text>'
-        '<rect class="caret" x="420" y="64" width="12" height="24" fill="#35D0A0"/></g>'
-        + f'<g transform="translate(0,0)" transform-origin="0 0">{rows}</g>'
-    )
-    return svg(w, h, body, css, c_defs)
-
 
 def main():
     outputs = {
@@ -631,7 +583,6 @@ def main():
         "figma.svg": figma(),
         "devpost.svg": devpost(),
         "gemini.svg": gemini(),
-        "freebuff.svg": freebuff(),
     }
     for name, text in outputs.items():
         (HERE / name).write_text(text)

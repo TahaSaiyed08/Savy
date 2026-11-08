@@ -1,4 +1,4 @@
-.PHONY: setup dev api web tunnel test lint gen-api check-api flipp-snapshot databricks-setup
+.PHONY: setup dev api web tunnel test lint gen-api check-api flipp-snapshot flyer-snapshot databricks-setup
 
 setup:            ## install Python (uv) and web (npm) dependencies
 	uv sync
@@ -36,6 +36,8 @@ gen-api:          ## regenerate the typed web client after changing apps/api
 
 check-api: gen-api  ## CI: fail if the committed client is stale
 	git diff --exit-code apps/web/openapi.json apps/web/src/lib/api-schema.ts
+
+flyer-snapshot: flipp-snapshot  ## same as flipp-snapshot (the name the README uses)
 
 flipp-snapshot:    ## download this week's flyers now (the API also does this itself); POSTAL=M5V2T6 for elsewhere
 	uv run python apps/api/snapshot_flipp.py $(POSTAL)

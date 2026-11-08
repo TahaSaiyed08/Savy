@@ -5,6 +5,10 @@ const API_URL = process.env.API_URL ?? "http://127.0.0.1:8000";
 const DATABRICKS_APP_URL = process.env.DATABRICKS_APP_URL;
 
 const nextConfig: NextConfig = {
+  // The proxy below gives up on a slow API after 30 s by default, which cuts off the calls that are slow by nature: a
+  // Genie answer (15 to 30 s, minutes when the warehouse is waking up) and a receipt scan. The API has its own limits
+  // (Genie 150 s, Gemini under 100 s), so this only has to be longer than those.
+  experimental: { proxyTimeout: 180_000 },
   devIndicators: false, // the floating badge covers the tab bar on phones
   // `make tunnel` serves dev over https://*.trycloudflare.com (campus Wi-Fi blocks phone-to-laptop traffic).
   allowedDevOrigins: ["*.trycloudflare.com"],
