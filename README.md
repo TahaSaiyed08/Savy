@@ -17,6 +17,15 @@ make setup   # uv sync + npm ci + copies .env.example to .env
 make dev     # API on :8000, PWA on :3000; Ctrl-C stops both
 ```
 
+On Windows, use the command file instead of `make setup` and `make dev`:
+
+```powershell
+.\dev.cmd setup  # install dependencies and create .env if it doesn't exist
+.\dev.cmd dev    # start both servers; Ctrl-C stops them
+```
+
+Run setup first to install the local Next.js dependency; if `next` is not recognized, rerun setup.
+
 Open http://localhost:3000. With an empty `.env` everything runs on **mock data**: a new device gets five seeded
 list items, mock flyers for five stores, canned receipt and voice extraction. API docs: http://localhost:8000/docs.
 
