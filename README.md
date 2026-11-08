@@ -154,7 +154,6 @@ Real flyer data comes from [Flipp](https://flipp.com)'s public, unauthenticated 
 | `GET /flyers?locale=en-ca&postal_code=<postal>` | This week's flyers for a postal code; filtered to the merchant + a `categories_csv` containing "Groceries" (a merchant can run non-grocery flyers too, e.g. Superstore's Toy Book) |
 | `GET /flyers/{id}?locale=en-ca` | A flyer's item list + pages. `pages[]` carries no image URL (confirmed live on five flyers) |
 | `GET /items/{item_id}` | Full item detail: `description` (sometimes a size, often not), `current_price`, `image_url` (the full flyer page this item sits on) |
-| `GET /items/search?locale=en-ca&postal_code=<postal>&q=<q>` | Cross-merchant search, used only by the optional live-match fallback below |
 
 `to_extracted_item()` parses an item (+ detail) into the same `ExtractedItem` shape every other extraction
 mode returns, reading size from `description` first and falling back to parsing it out of the product name;
@@ -178,11 +177,6 @@ managed table, so there's a real caveat about writing into it directly.
 **Accuracy check**: `databricks/setup/golden_check.py --week YYYY-MM-DD` fuzzy-matches `ai_query`'s
 `flyer_items` rows against the Flipp ground truth for the same store/week and prints field accuracy —
 the 13:00 Sat go/no-go number.
-
-**Optional live match fallback**: if AI Search and the SQL `LIKE` fallback both come up empty for a saved
-item, `apps/api/store.py` tries one cached (1 h) Flipp search and scores results with the usual
-`logic.match_score` threshold — the only network call allowed on a request path, and only reached when both
-of the normal paths already failed.
 
 ## Claim a workstream
 

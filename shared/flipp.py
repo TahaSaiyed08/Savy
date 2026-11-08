@@ -166,7 +166,7 @@ def flyer_items_table_row(fi: FlyerItem, confidence: float = 0.95) -> dict:
     table has (from the ai_query pipeline output) but the frozen FlyerItem Pydantic model doesn't carry.
     JSON-serializable (week_start as an ISO string) for both the sidecar file and SQL array parameters.
     """
-    row = fi.model_dump(mode="json")
+    row = {key: value for key, value in fi.model_dump(mode="json").items() if key in FLYER_ITEM_COLUMNS}
     row["confidence"] = confidence
     row["match_text"] = " ".join(p for p in (fi.brand, fi.item, fi.variant,
                                               f"{fi.size_qty:g}{fi.size_unit}" if fi.size_qty and fi.size_unit else "")
