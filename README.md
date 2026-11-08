@@ -9,7 +9,7 @@ receipts), with the cheapest store for the whole basket. Mobile-first PWA, HackC
 ## Setup (every teammate)
 
 Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 20+, make (macOS/Linux; Windows uses dev.cmd), git.
-WS1 also needs the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
+WS1 and the demo laptop also need the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
 
 ```sh
 git clone https://github.com/krish-arora-88/SurRealDeal.git && cd SurRealDeal
@@ -49,6 +49,72 @@ client after changing the API; CI fails if you forget).
 Overrides: `REALDEAL_MOCK=0|1`, `EXTRACTOR=mock|claude|databricks`, `ANTHROPIC_MODEL`, `API_URL` (web → API proxy target).
 Never commit `.env`.
 
+The web app reads its own settings from `apps/web/.env.local` (git-ignored). `DATABRICKS_APP_URL` there switches
+its `/api/*` proxy from the local API to the Databricks App; see below.
+
+## Host the API on Databricks (demo)
+
+For the demo the API runs as a Databricks App and the PWA stays on the demo laptop (with `make tunnel` for the
+phone). Databricks Apps only accept signed-in callers, so the laptop's Next.js server adds an OAuth token from the
+Databricks CLI to every `/api/*` request ([`route.ts`](apps/web/src/app/api/[...path]/route.ts)); the browser never
+sees it. Personal access tokens can't be exchanged for app tokens, which is why this uses the CLI login.
+
+**1. Create the app (workspace admin, once).** Run these where the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html)
+is logged in to the team workspace.
+
+1. Store the API keys as secrets (each command prompts for the value):
+   ```sh
+   databricks secrets create-scope realdeal
+   databricks secrets put-secret realdeal anthropic-api-key
+   databricks secrets put-secret realdeal elevenlabs-api-key
+   ```
+2. In the workspace: **Compute → Apps → Create app → Custom**, name it `realdeal-api`, and add three resources with
+   exactly these keys ([`app.yaml`](app.yaml) reads them):
+
+   | Resource key | Type | Points at | Permission |
+   | --- | --- | --- | --- |
+   | `sql-warehouse` | SQL warehouse | the team warehouse | Can use |
+   | `anthropic-api-key` | Secret | scope `realdeal`, key `anthropic-api-key` | Can read |
+   | `elevenlabs-api-key` | Secret | scope `realdeal`, key `elevenlabs-api-key` | Can read |
+3. Give the app's service principal access to the data. Its application ID is on the app's **Authorization** tab:
+   ```sql
+   GRANT USE CATALOG ON CATALOG realdeal TO `<app-service-principal-application-id>`;
+   GRANT USE SCHEMA, SELECT, MODIFY ON SCHEMA realdeal.core TO `<app-service-principal-application-id>`;
+   GRANT READ VOLUME ON VOLUME realdeal.core.flyers TO `<app-service-principal-application-id>`;
+   GRANT READ VOLUME, WRITE VOLUME ON VOLUME realdeal.core.uploads TO `<app-service-principal-application-id>`;
+   ```
+4. Give whoever logs in on the demo laptop **Can use** on the app (app page → **Permissions**).
+
+**2. Deploy (first time, and after every API change).** From the repo root:
+
+```sh
+# Only when Python dependencies changed: the app installs from requirements.txt, not uv.lock.
+uv export --no-dev --no-hashes --no-emit-project --format requirements-txt -o requirements.txt
+databricks sync --full . /Workspace/Users/<you>/realdeal-api      # respects .gitignore: no .env, no node_modules
+databricks apps deploy realdeal-api --source-code-path /Workspace/Users/<you>/realdeal-api
+```
+
+Check it: open the app URL in a browser where you're signed in to Databricks and add `/health`. It should show
+`"mock": false` and `"extractor": "ClaudeExtractor"`; `/docs` shows the API.
+
+**3. Point the demo laptop at it.**
+
+1. Install the Databricks CLI, then sign in once (a browser opens; the CLI keeps the login refreshed):
+   ```sh
+   databricks auth login --host https://<workspace>.cloud.databricks.com
+   ```
+2. Create `apps/web/.env.local`:
+   ```
+   DATABRICKS_APP_URL=https://<app URL from the app page>
+   DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
+   ```
+3. Start the PWA as usual (`make dev` or `.\dev.cmd dev`; the local API it also starts is simply unused) and
+   `make tunnel` for the phone. Delete `apps/web/.env.local` to go back to the local API.
+
+**Before judging:** Free Edition stops apps after 24 hours, so restart it Sunday morning
+(`databricks apps start realdeal-api`), then load the Deals tab once so the SQL warehouse is warm. If the PWA shows
+"Couldn't get a Databricks token", run the `databricks auth login` command again.
+
 ## Claim a workstream
 
 Four workstreams (Data/Pipeline, Backend, Frontend, Design & Pitch) are in [`docs/plan.md`](docs/plan.md), each with
@@ -84,6 +150,7 @@ apps/web/        Next.js 15 PWA: 3 tabs, HIG tokens (src/app/globals.css), typed
 shared/          normalize_unit + tests, versioned prompts (flyer_page, receipt, product, manual)
 databricks/      sql/ (DDL, views), pipeline/ (Lakeflow Bronze→Silver→Gold), fetchers/ (one per store), setup/
 databricks.yml   Asset bundle for the pipeline
+app.yaml         Databricks App that hosts the API for the demo (requirements.txt is its package list)
 .mcp.json        Databricks docs MCP (devhub-docs) for Claude Code
 ```
 
