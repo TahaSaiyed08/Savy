@@ -95,6 +95,26 @@ test("price match: links to the store's own page, and nothing links to the flyer
   await expect(page.locator('a[href*="flipp"]')).toHaveCount(0);
 });
 
+test("price match: Original flyer opens the store in a new tab and leaves the app where it was", async ({ page, context }) => {
+  await page.route("**/api/flyer-items**", async (route) => {
+    const body = await (await route.fetch()).json();
+    Object.assign(body.items[0].cheapest, { store_url: "https://www.nofrills.ca/en/p/20921434001_EA" });
+    await route.fulfill({ json: body });
+  });
+  await context.route("https://www.nofrills.ca/**", (route) => route.fulfill({ body: "the store's page" })); // no real network
+  await page.goto("/flyers");
+  await page.locator("li button").first().click();
+  await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible();
+
+  const [store] = await Promise.all([context.waitForEvent("page"), page.getByRole("link", { name: /Original flyer/ }).click()]);
+  await store.waitForLoadState();
+  expect(store.url()).toBe("https://www.nofrills.ca/en/p/20921434001_EA"); // a second tab, at the store's own page
+  expect(context.pages()).toHaveLength(2);
+  expect(page.url()).toContain("/flyers"); // the app did not navigate away...
+  await expect(page.getByRole("heading", { name: "Price match" })).toBeVisible(); // ...and is still on Price Match
+  expect(await store.evaluate(() => window.opener)).toBeNull(); // the store page cannot reach back into the app
+});
+
 test("price match: no Original flyer link when the store has no page for the item", async ({ page }) => {
   await page.route("**/api/flyer-items**", async (route) => {
     const body = await (await route.fetch()).json();
