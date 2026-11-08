@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Chip, EmptyState, LargeTitle, Status } from "@/components/ui";
+import { Chip, EmptyState, LargeTitle, RetryButton, Status } from "@/components/ui";
 import { Tag } from "@/components/icons";
 import { DealCard } from "@/components/deals/DealCard";
 import { DealDetailSheet, formatValidity } from "@/components/deals/DealDetailSheet";
@@ -10,7 +10,7 @@ import { useApi } from "@/lib/use-api";
 const ALL = "All stores";
 
 export default function Deals() {
-  const { data, loading, error } = useApi(() => api.GET("/deals", { params: withUser() }));
+  const { data, loading, error, refetch } = useApi(() => api.GET("/deals", { params: withUser() }));
   const [store, setStore] = useState<string>(ALL);
   const [active, setActive] = useState<Schemas["Deal"] | null>(null);
 
@@ -43,6 +43,7 @@ export default function Deals() {
       />
 
       <Status loading={loading} error={error} />
+      {error && <RetryButton onRetry={refetch} />}
 
       {!loading && !error && (data?.length ?? 0) === 0 && (
         <EmptyState icon={<Tag size={52} />} title="No deals on your items this week." subtitle="New flyers land every Thursday." />

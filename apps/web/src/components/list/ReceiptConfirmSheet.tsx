@@ -3,7 +3,7 @@
 // form; everything else ("LOOKS RIGHT") is pre-selected with a tap-to-exclude checkmark, per the design.
 import { useState } from "react";
 import { Sheet } from "@/components/Sheet";
-import { PrimaryButton } from "@/components/ui";
+import { InlineError, PrimaryButton } from "@/components/ui";
 import { CircleCheck, TriangleAlert } from "@/components/icons";
 import { ItemEditor, draftFrom, draftToItem, type ItemDraft } from "@/components/ItemEditor";
 import type { Schemas } from "@/lib/api";
@@ -21,12 +21,17 @@ export function ReceiptConfirmSheet({
   onClose,
   onSave,
   saving,
+  saveError,
+  onRetrySave,
 }: {
   open: boolean;
   extraction: Schemas["Extraction"];
   onClose: () => void;
   onSave: (items: Schemas["ExtractedItem"][]) => void;
   saving?: boolean;
+  /** Set when the last onSave's /items call failed; "tap to retry" re-submits the same chosen items. */
+  saveError?: string;
+  onRetrySave?: () => void;
 }) {
   const [items, setItems] = useState(extraction.items);
   const [selected, setSelected] = useState<Set<number>>(() => new Set(extraction.items.map((_, i) => i)));
@@ -128,7 +133,8 @@ export function ReceiptConfirmSheet({
           </>
         )}
 
-        <div className="pt-6">
+        <div className="flex flex-col gap-2 pt-6">
+          {saveError && onRetrySave && <InlineError message={saveError} onRetry={onRetrySave} />}
           <PrimaryButton onClick={() => onSave(chosenItems)} disabled={chosenItems.length === 0} loading={saving}>
             Save {chosenItems.length} item{chosenItems.length === 1 ? "" : "s"}
           </PrimaryButton>

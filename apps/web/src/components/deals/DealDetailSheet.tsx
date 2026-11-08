@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Sheet } from "@/components/Sheet";
 import { PrimaryButton, money } from "@/components/ui";
-import { productImageFor } from "@/lib/products";
+import { productImage } from "@/lib/products";
 import { formatUnit } from "@/components/deals/DealCard";
 import type { Schemas } from "@/lib/api";
 
@@ -26,7 +26,7 @@ export function DealDetailSheet({
 }) {
   const [showNote, setShowNote] = useState(false);
   if (!deal) return null;
-  const img = productImageFor(deal.item_label, deal.store);
+  const img = productImage(deal.flyer_label);
   const validity = formatValidity(deal.week_start);
 
   return (

@@ -69,6 +69,31 @@ export function Status({ loading, error, empty }: { loading?: boolean; error?: s
   return text ? <p className="px-8 py-12 text-center text-label-2">{text}</p> : null;
 }
 
+/** Pairs with `Status`'s `error` text when the caller has a `refetch`/`retry` to offer — kept separate so
+ * `Status`'s own props stay frozen. */
+export function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="-mt-8 flex justify-center pb-10">
+      <button type="button" onClick={onRetry} className="min-h-tap px-4 font-semibold text-tint">
+        Retry
+      </button>
+    </div>
+  );
+}
+
+/** Save/upload failure banner with a tap-to-retry action; token-driven, used by the intake sheets. */
+export function InlineError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRetry}
+      className="flex min-h-tap w-full items-center justify-center gap-1.5 rounded-[10px] border border-warning-border bg-warning-bg px-3 text-center text-[15px] font-medium text-warning-text"
+    >
+      {message}
+    </button>
+  );
+}
+
 export function EmptyState({
   icon,
   title,

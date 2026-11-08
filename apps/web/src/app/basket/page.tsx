@@ -1,13 +1,13 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { EmptyState, InsetGroup, LargeTitle, Row, Status, money } from "@/components/ui";
+import { EmptyState, InsetGroup, LargeTitle, RetryButton, Row, Status, money } from "@/components/ui";
 import { CircleCheck, ShoppingCart } from "@/components/icons";
 import { api, withUser } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 
 export default function Basket() {
   const router = useRouter();
-  const { data: b, loading, error } = useApi(() => api.GET("/basket", { params: withUser() }));
+  const { data: b, loading, error, refetch } = useApi(() => api.GET("/basket", { params: withUser() }));
   const cheapest = b?.stores[0];
   const totalItems = cheapest ? cheapest.matched + cheapest.missing : 0;
 
@@ -15,6 +15,7 @@ export default function Basket() {
     <>
       <LargeTitle title="Basket" />
       <Status loading={loading} error={error} />
+      {error && <RetryButton onRetry={refetch} />}
 
       {!loading && !error && b && !b.cheapest_store && (
         <EmptyState icon={<ShoppingCart size={52} />} title="Add items to compare stores." primaryLabel="Add items" onPrimary={() => router.push("/list")} />

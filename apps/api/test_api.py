@@ -37,7 +37,21 @@ def test_delete_item_removes_it():
     after = c.get("/items", headers=H).json()
     assert len(after) == len(before) - 1
     assert target not in {i["user_item_id"] for i in after}
-    c.delete("/items/does-not-exist", headers=H)  # idempotent, no error
+
+
+def test_delete_unknown_id_is_idempotent():
+    assert c.delete("/items/does-not-exist", headers=H).status_code == 204
+
+
+def test_delete_cannot_remove_another_users_item():
+    user_a, user_b = {"X-User-Id": str(uuid.uuid4())}, {"X-User-Id": str(uuid.uuid4())}
+    c.post("/items", headers=user_a, json={"items": [{"item": "milk", "confidence": 1}], "source": "manual"})
+    target = c.get("/items", headers=user_a).json()[0]["user_item_id"]
+
+    assert c.delete(f"/items/{target}", headers=user_b).status_code == 204  # scoped by user_id: no-op
+
+    after = c.get("/items", headers=user_a).json()
+    assert target in {i["user_item_id"] for i in after}
 
 
 def test_rejects_non_image_receipt():

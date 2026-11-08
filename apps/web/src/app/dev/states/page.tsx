@@ -7,6 +7,7 @@
 // needs mic permission, and the three "empty" screens need an empty list — the buttons below actually
 // clear/restore the list via the real DELETE /items and POST /items endpoints so those are real too.
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { useEffect, useState } from "react";
 import { EmptyState, LargeTitle } from "@/components/ui";
 import { ReceiptText, ShoppingCart, Tag } from "@/components/icons";
@@ -74,6 +75,8 @@ function DevButton({ label, note, onClick, href }: { label: string; note?: strin
 }
 
 export default function DevStates() {
+  if (process.env.NODE_ENV === "production") notFound();
+
   const [sheet, setSheet] = useState<
     "methods" | "receipt-loading" | "receipt-confirm" | "pick-product" | "type-idle" | "type-recording" | "deal-detail" | null
   >(null);

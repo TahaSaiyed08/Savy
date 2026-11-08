@@ -9,7 +9,13 @@ export class VoiceRecorder {
   async start(onLevel?: (level: number) => void) {
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mimeType = ["audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
-    this.recorder = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
+    try {
+      this.recorder = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
+    } catch (err) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = undefined;
+      throw err;
+    }
     this.chunks = [];
     this.recorder.ondataavailable = (e) => {
       if (e.data.size) this.chunks.push(e.data);

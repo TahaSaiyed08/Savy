@@ -14,9 +14,12 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "cd .. && make dev",
+    command: "cd ../.. && make dev",
     url: "http://localhost:3000",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 60_000,
+    // Verified: exported vars override uv's --env-file, so this forces mock mode even if .env sets
+    // DATABRICKS_HOST (CI's .env is just `touch`ed empty, but this makes the override explicit either way).
+    env: { REALDEAL_MOCK: "1", EXTRACTOR: "mock" },
   },
 });

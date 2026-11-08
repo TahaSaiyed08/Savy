@@ -3,10 +3,11 @@
 // mic records via MediaRecorder and posts to /intake/voice. Both land on the same parsed editor.
 import { useRef, useState } from "react";
 import { Sheet } from "@/components/Sheet";
-import { PrimaryButton } from "@/components/ui";
+import { InlineError, PrimaryButton } from "@/components/ui";
 import { Loader, Mic } from "@/components/icons";
 import { ItemEditor, draftFrom, draftToItem, type ItemDraft } from "@/components/ItemEditor";
 import { api, withUser, type Schemas } from "@/lib/api";
+import { intakeController, intakeErrorMessage } from "@/lib/intake";
 import { VoiceRecorder } from "@/lib/recorder";
 
 export type Step = "idle" | "recording" | "transcribing" | "parsed";
@@ -17,12 +18,17 @@ export function TypeOrSaySheet({
   onClose,
   onAdd,
   saving,
+  saveError,
+  onRetrySave,
   previewStep,
 }: {
   open: boolean;
   onClose: () => void;
   onAdd: (item: Schemas["ExtractedItem"], source: "manual" | "voice") => void;
   saving?: boolean;
+  /** Set when the last onAdd's /items save failed; "tap to retry" re-submits the same parsed item. */
+  saveError?: string;
+  onRetrySave?: () => void;
   /** Dev-only: render straight into a step (e.g. "recording") without a real mic, for /dev/states. */
   previewStep?: Step;
 }) {
@@ -36,6 +42,7 @@ export function TypeOrSaySheet({
   const [errorMsg, setErrorMsg] = useState<string>();
   const [viaVoice, setViaVoice] = useState(false);
   const recorder = useRef<VoiceRecorder | null>(null);
+  const released = useRef(false);
 
   function reset() {
     setStep("idle");
@@ -53,28 +60,54 @@ export function TypeOrSaySheet({
     setStep("transcribing");
     setErrorMsg(undefined);
     setViaVoice(false);
+    const ctl = intakeController();
     try {
-      const { data, error } = await api.POST("/intake/manual", { params: withUser(), body: { text: value } });
-      if (error || !data) throw new Error();
+      const { data, error, response } = await api.POST("/intake/manual", {
+        params: withUser(),
+        body: { text: value },
+        signal: ctl.signal,
+      });
+      ctl.done();
+      if (error || !data) {
+        setErrorMsg(intakeErrorMessage(response));
+        setStep("idle");
+        return;
+      }
       setTranscript(value);
       setDraft(draftFrom(data.extraction.items[0] ?? { item: value, confidence: 0.5 }));
       setStep("parsed");
     } catch {
-      setErrorMsg("Couldn't understand that. Try again.");
+      ctl.done();
+      if (ctl.wasCancelled()) return;
+      setErrorMsg(intakeErrorMessage());
       setStep("idle");
     }
   }
 
   async function startRecording() {
+    if (typeof window === "undefined" || !window.MediaRecorder || !navigator.mediaDevices) {
+      setErrorMsg("Recording isn't supported here — type instead.");
+      return;
+    }
+    released.current = false;
     try {
       const rec = new VoiceRecorder();
       await rec.start((level) => setLevels((prev) => [...prev.slice(1), 0.15 + level * 0.85]));
+      if (released.current) {
+        rec.cancel();
+        return;
+      }
       recorder.current = rec;
       setErrorMsg(undefined);
       setStep("recording");
     } catch {
       setErrorMsg("Microphone access is blocked. Type it instead.");
     }
+  }
+
+  function releaseTalk() {
+    released.current = true;
+    if (step === "recording") stopRecording();
   }
 
   async function stopRecording() {
@@ -87,20 +120,33 @@ export function TypeOrSaySheet({
     setStep("transcribing");
     const result = await rec.stop();
     if (!result) {
+      setErrorMsg("Hold the button while you talk.");
       setStep("idle");
       return;
     }
     setViaVoice(true);
+    const ctl = intakeController();
     try {
       const form = new FormData();
       form.set("file", result.blob, result.filename);
-      const { data, error } = await api.POST("/intake/voice", { params: withUser(), body: form as never });
-      if (error || !data) throw new Error();
+      const { data, error, response } = await api.POST("/intake/voice", {
+        params: withUser(),
+        body: form as never,
+        signal: ctl.signal,
+      });
+      ctl.done();
+      if (error || !data) {
+        setErrorMsg(intakeErrorMessage(response));
+        setStep("idle");
+        return;
+      }
       setTranscript(data.transcript ?? undefined);
       setDraft(draftFrom(data.extraction.items[0] ?? { item: "", confidence: 0.5 }));
       setStep("parsed");
     } catch {
-      setErrorMsg("Couldn't transcribe that. Try again.");
+      ctl.done();
+      if (ctl.wasCancelled()) return;
+      setErrorMsg(intakeErrorMessage());
       setStep("idle");
     }
   }
@@ -127,6 +173,7 @@ export function TypeOrSaySheet({
           <>
             {transcript && <p className="text-[15px] text-label-2">&ldquo;{transcript}&rdquo;</p>}
             <ItemEditor draft={draft} onChange={setDraft} />
+            {saveError && onRetrySave && <InlineError message={saveError} onRetry={onRetrySave} />}
             <PrimaryButton onClick={submitParsed} disabled={!draft.item} loading={saving}>
               Add to list
             </PrimaryButton>
@@ -161,13 +208,14 @@ export function TypeOrSaySheet({
 
               <button
                 type="button"
+                aria-label={step === "recording" ? "Release to stop recording" : "Hold to talk"}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   (e.currentTarget as Element).setPointerCapture(e.pointerId);
                   if (step === "idle") startRecording();
                 }}
-                onPointerUp={() => step === "recording" && stopRecording()}
-                onPointerCancel={() => step === "recording" && stopRecording()}
+                onPointerUp={releaseTalk}
+                onPointerCancel={releaseTalk}
                 disabled={step === "transcribing"}
                 className={`flex items-center justify-center rounded-full border shadow-soft transition-all duration-150 ${
                   step === "recording" ? "size-[110px] border-2 border-tint/30 bg-savings-bg" : "size-24 border-separator bg-bg"

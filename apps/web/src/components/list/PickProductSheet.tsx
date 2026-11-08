@@ -3,7 +3,7 @@
 // edits. The 108x108 preview is the photo they actually took, not a stock image.
 import { useState } from "react";
 import { Sheet } from "@/components/Sheet";
-import { PrimaryButton } from "@/components/ui";
+import { InlineError, PrimaryButton } from "@/components/ui";
 import { Check } from "@/components/icons";
 import { ItemEditor, draftFrom, draftToItem, type ItemDraft } from "@/components/ItemEditor";
 import type { Schemas } from "@/lib/api";
@@ -20,6 +20,8 @@ export function PickProductSheet({
   onClose,
   onAdd,
   saving,
+  saveError,
+  onRetrySave,
 }: {
   open: boolean;
   previewUrl?: string;
@@ -27,6 +29,9 @@ export function PickProductSheet({
   onClose: () => void;
   onAdd: (item: Schemas["ExtractedItem"]) => void;
   saving?: boolean;
+  /** Set when the last onAdd's /items call failed; "tap to retry" re-submits the same picked item. */
+  saveError?: string;
+  onRetrySave?: () => void;
 }) {
   const [pickedIndex, setPickedIndex] = useState(0);
   const [draft, setDraft] = useState<ItemDraft>(() => draftFrom(candidates[0] ?? { item: "", confidence: 1 }));
@@ -88,6 +93,7 @@ export function PickProductSheet({
 
         <ItemEditor draft={draft} onChange={setDraft} />
 
+        {saveError && onRetrySave && <InlineError message={saveError} onRetry={onRetrySave} />}
         <PrimaryButton onClick={submit} disabled={!draft.item} loading={saving}>
           Add to list
         </PrimaryButton>

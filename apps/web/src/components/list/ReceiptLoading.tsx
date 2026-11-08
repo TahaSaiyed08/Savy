@@ -1,6 +1,7 @@
 "use client";
 // Full-screen takeover (not a sheet) while /intake/receipt runs, matching the Figma "Reading receipt" frame.
-import { Loader } from "@/components/icons";
+import { Loader, TriangleAlert } from "@/components/icons";
+import { PrimaryButton } from "@/components/ui";
 
 export function ReceiptLoading({ previewUrl, onCancel }: { previewUrl?: string; onCancel: () => void }) {
   return (
@@ -21,6 +22,26 @@ export function ReceiptLoading({ previewUrl, onCancel }: { previewUrl?: string; 
         <div className="flex flex-col items-center gap-2 text-center">
           <p className="text-[22px] font-semibold">Reading your receipt…</p>
           <p className="text-[15px] text-label-2">This takes a few seconds.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Same full-screen takeover, shown when an upload fails instead of silently closing (#2). */
+export function IntakeError({ message, onRetry, onCancel }: { message: string; onRetry: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <div className="flex h-11 items-center px-4">
+        <button type="button" onClick={onCancel} className="text-[17px] font-semibold text-tint">
+          Cancel
+        </button>
+      </div>
+      <div className="flex flex-1 flex-col items-center gap-6 px-8 pt-16 text-center">
+        <TriangleAlert size={40} className="text-destructive" />
+        <p className="text-[22px] font-semibold">{message}</p>
+        <div className="w-full max-w-[220px]">
+          <PrimaryButton onClick={onRetry}>Try again</PrimaryButton>
         </div>
       </div>
     </div>
