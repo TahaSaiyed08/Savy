@@ -17,10 +17,10 @@ const COOKIE_MAX_AGE_S = 7 * 24 * 3600;
 function page(message = "", status = 200): Response {
   // message is always one of the fixed strings below, never user input
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Unlock Real Deal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Unlock Savy</title>
 <style>body{font:17px -apple-system,system-ui,sans-serif;max-width:22rem;margin:20vh auto;padding:0 1rem}
 input,button{font:inherit;width:100%;box-sizing:border-box;min-height:44px;margin-top:.75rem;padding:.5rem}
-p{color:#c00}</style></head><body><h1>Real Deal demo</h1>
+p{color:#c00}</style></head><body><h1>Savy demo</h1>
 <form method="post"><label for="p">Demo passcode</label>
 <input id="p" name="passcode" type="password" autocomplete="current-password" required autofocus>
 <button type="submit">Unlock</button></form>${message ? `<p role="alert">${message}</p>` : ""}</body></html>`;

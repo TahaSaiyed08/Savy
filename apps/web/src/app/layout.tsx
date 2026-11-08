@@ -5,9 +5,9 @@ import { TabBar } from "@/components/TabBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Real Deal",
+  title: "Savy",
   description: "This week's grocery deals on the things you actually buy.",
-  appleWebApp: { capable: true, title: "Real Deal", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "Savy", statusBarStyle: "default" },
   icons: { apple: "/apple-touch-icon.png" },
 };
 

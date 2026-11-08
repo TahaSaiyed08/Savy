@@ -1,4 +1,4 @@
-"""Real Deal API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
+"""Savy API. Run: make dev (or uv run uvicorn apps.api.main:app --reload). Docs at /docs."""
 import asyncio
 import ipaddress
 import logging
@@ -51,7 +51,7 @@ async def lifespan(_app: FastAPI):
         keeper.cancel()
 
 
-app = FastAPI(title="Real Deal API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Savy API", version="0.1.0", lifespan=lifespan)
 MAX_UPLOAD = 10 * 1024 * 1024
 # Any item the model is less than 60% sure of makes the whole result "needs_confirm", so the app shows a review sheet
 # instead of saving silently.

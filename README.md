@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" width="100%" alt="Real Deal: money raining over the title, with the line 'Every grocery flyer near you, in one place'" />
+  <img src="docs/assets/banner.svg" width="100%" alt="Savy: money raining over the title, with the line 'Every grocery flyer near you, in one place'" />
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ Real screenshots of the app running against this week's real flyers near V6T 1Z4
 | **Best Use of Databricks** | Unity Catalog tables, a Lakeflow pipeline, the SQL Statement API, Genie, Model Serving, `ai_query`, Volumes and a Databricks App, all doing real work in the app. | [Databricks](#databricks-the-lakehouse-under-the-whole-app) |
 | **Best Design** | Designed in Figma first (18 screens), built to match, with light and dark themes, large tap targets and screen-reader support. | [Figma and design](#figma-designed-first-then-built) |
 | **Best Use of Gemini API** | Gemini reads receipts, product photos and typed lines into items, as a drop-in extractor beside Claude and `ai_query`. | [Gemini](#gemini-a-second-pair-of-eyes-for-receipts) |
-| **Community Impact** | Students on a food budget compare 30 to 40 pages of flyers by hand every week; Real Deal does it for them, free and with no account. | [Community impact](#community-impact) |
+| **Community Impact** | Students on a food budget compare 30 to 40 pages of flyers by hand every week; Savy does it for them, free and with no account. | [Community impact](#community-impact) |
 | **Best Project Built with Freebuff** | Freebuff is one of the coding agents we built it with. | [Freebuff](#freebuff-our-coding-agent) |
 
 The Overall Winner and nwChoice awards need no opt-in.
@@ -157,7 +157,7 @@ The app started as a Figma file: mobile frames for every tab, sheet and state, i
   <img src="docs/assets/freebuff.svg" width="100%" alt="A terminal where a coding agent reads the repo, plans the change, edits the files and runs the tests" />
 </p>
 
-We used Freebuff as one of the coding agents we built Real Deal with at HackCamp, alongside Claude Code. <!-- Judges need specifics: add which parts Freebuff built or reviewed, and what it saved us. -->
+We used Freebuff as one of the coding agents we built Savy with at HackCamp, alongside Claude Code. <!-- Judges need specifics: add which parts Freebuff built or reviewed, and what it saved us. -->
 
 <p align="center"><img src="docs/assets/rain-divider.svg" width="100%" alt="" /></p>
 
@@ -176,7 +176,7 @@ HackCamp 2026, Databricks track. The Devpost page holds the story, what it is bu
 
 **The problem.** Students on a food budget re-make the same decision every week: where to shop, and what is actually cheap. Today that means 30 to 40 pages of flyers across Flipp and store apps, none of which know what you buy or compare unit prices across stores.
 
-**What Real Deal changes.**
+**What Savy changes.**
 
 - **It does the comparing.** You see deals only on the items you buy, the cheapest store for each, and for the whole basket, with prices compared per 100 g, per 100 ml or per item, so a bigger pack is judged fairly.
 - **It is free and open to anyone.** No account, no sign-up, nothing to install: it runs in a phone browser, for any Canadian postal code, on public flyer data.
@@ -433,5 +433,5 @@ The README's animations are plain SVGs drawn in code: `uv run python docs/assets
 `.mcp.json` registers the Databricks developer docs MCP server (`devhub-docs`). Claude Code asks you to approve it
 the first time you open the repo; then ask it things like "how do I trigger a Lakeflow pipeline update".
 
-- Spec: [`docs/superpowers/specs/Real Deal — MVP Design.md`](docs/superpowers/specs/Real%20Deal%20—%20MVP%20Design.md)
+- Spec: [`docs/superpowers/specs/Savy — MVP Design.md`](docs/superpowers/specs/Savy%20—%20MVP%20Design.md)
 - Plan, workstreams, go/no-go, cut list: [`docs/plan.md`](docs/plan.md)

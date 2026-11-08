@@ -164,7 +164,7 @@ def banner():
         f'<g>{rain(w, h, 24, 8, sizes=(0.85, 1.35), opacity=(0.8, 1.0), speed=(5.5, 9))}</g>'  # near layer, big and quick, behind the words
         f'<rect width="{w}" height="{h}" fill="url(#vig)"/>'
         '<g filter="url(#sh)" text-anchor="middle">'
-        '<text x="640" y="205" font-size="132" font-weight="900" fill="#fff" letter-spacing="-3">Real Deal</text></g>'
+        '<text x="640" y="205" font-size="132" font-weight="900" fill="#fff" letter-spacing="-3">Savy</text></g>'
         '<g text-anchor="middle" font-size="27" font-weight="600" fill="#D6FFE5">'
         '<text class="line" x="640" y="262" style="animation-delay:0s">Every grocery flyer near you, in one place.</text>'
         '<text class="line" x="640" y="262" style="animation-delay:4s">Matched to what you actually buy.</text>'
@@ -608,7 +608,7 @@ def freebuff():
         '<rect x="38" y="42" width="12" height="6" rx="3" fill="#06231A"/></g>'
         + '<text x="70" y="212" font-size="52" font-weight="800" fill="#fff" letter-spacing="-1">Freebuff</text>'
         + '<text x="70" y="260" font-size="22" font-weight="600" fill="#9CEBD0">Our coding agent at HackCamp.</text>'
-        + '<g font-size="17" font-weight="500" fill="#CDEFE3"><text x="70" y="310">One of the tools we built Real Deal with,</text>'
+        + '<g font-size="17" font-weight="500" fill="#CDEFE3"><text x="70" y="310">One of the tools we built Savy with,</text>'
         '<text x="70" y="338">alongside Claude Code.</text></g>'
         + '<g transform="translate(440,56)"><rect width="780" height="306" rx="16" fill="#04100C" stroke="#35D0A0" stroke-opacity=".35" stroke-width="1.5"/>'
         '<circle cx="26" cy="26" r="6" fill="#FF5F57"/><circle cx="48" cy="26" r="6" fill="#FEBC2E"/><circle cx="70" cy="26" r="6" fill="#28C840"/>'

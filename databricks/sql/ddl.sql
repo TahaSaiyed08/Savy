@@ -1,4 +1,4 @@
--- Real Deal: Unity Catalog objects. Run top to bottom in the SQL editor (idempotent).
+-- Savy: Unity Catalog objects. Run top to bottom in the SQL editor (idempotent).
 -- Frozen interface between workstream 1 (pipeline) and 2 (FastAPI). Pydantic mirrors: apps/api/models.py.
 
 CREATE CATALOG IF NOT EXISTS realdeal;

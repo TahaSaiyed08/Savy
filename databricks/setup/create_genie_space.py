@@ -1,11 +1,11 @@
-"""ONE-TIME setup for the Real Deal Genie space. Run it yourself, once, from the repo root:
+"""ONE-TIME setup for the Savy Genie space. Run it yourself, once, from the repo root:
 
     uv run --env-file .env python databricks/setup/create_genie_space.py
 
 It writes to your Databricks workspace. In realdeal.core it:
   1. creates the tables live_listings and price_history (if they don't exist),
   2. loads the flyers this machine has already downloaded (apps/api/data/flipp_<POSTAL>.json),
-  3. creates the Genie space "Real Deal: this week's grocery deals" over them (or updates it if it exists),
+  3. creates the Genie space "Savy: this week's grocery deals" over them (or updates it if it exists),
   4. saves the space id to apps/api/data/genie_space.json, which is how the API knows Genie is ready.
 
 Afterwards set REALDEAL_DATABRICKS_SYNC=1 in .env so every flyer refresh keeps the tables current.
@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from genie_space import DESCRIPTION, TITLE, build  # noqa: E402
+from genie_space import DESCRIPTION, LEGACY_TITLES, TITLE, build  # noqa: E402
 
 from apps.api import databricks_sync, flyers_live, genie  # noqa: E402
 
@@ -59,13 +59,14 @@ def main() -> None:
     existing, token = None, None
     while existing is None:
         page = w.genie.list_spaces(page_token=token)
-        existing = next((s for s in page.spaces or [] if s.title == TITLE), None)
+        existing = next((s for s in page.spaces or [] if s.title in (TITLE, *LEGACY_TITLES)), None)
         token = page.next_page_token
         if not token:
             break
     if existing:
         w.genie.update_space(
-            existing.space_id, serialized_space=serialized, warehouse_id=warehouse, description=DESCRIPTION)
+            existing.space_id, serialized_space=serialized, warehouse_id=warehouse, description=DESCRIPTION,
+            title=TITLE)  # also renames a space still carrying the old title
         space_id = existing.space_id
         print(f"   updated {space_id}")
     else:
