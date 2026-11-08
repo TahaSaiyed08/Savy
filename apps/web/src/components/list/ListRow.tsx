@@ -6,7 +6,7 @@ import type { Schemas } from "@/lib/api";
 
 const OPEN = -76;
 
-export function ListRow({ item, onDelete }: { item: Schemas["UserItem"]; onDelete: () => void }) {
+export function ListRow({ item, onDelete }: { item: Schemas["ListItem"]; onDelete: () => void }) {
   const [dx, setDx] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const drag = useRef<{ startX: number; startDx: number } | null>(null);

@@ -4,7 +4,7 @@ import { api, withUser, type Schemas } from "@/lib/api";
 
 /** My List state + mutations, shared by the list page and every intake sheet that saves into it. */
 export function useItems() {
-  const [items, setItems] = useState<Schemas["UserItem"][] | undefined>();
+  const [items, setItems] = useState<Schemas["ListItem"][] | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [deleteError, setDeleteError] = useState<string | undefined>();
