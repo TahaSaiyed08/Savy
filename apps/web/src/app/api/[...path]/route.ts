@@ -1,14 +1,30 @@
 // Proxy for /api/* when the API is hosted as a Databricks App (DATABRICKS_APP_URL is set; next.config.ts then
 // drops its plain rewrite). Databricks Apps only accept OAuth tokens, so this asks the Databricks CLI for one
 // (`databricks auth login --host <workspace>` once on this machine; the CLI refreshes it) and adds it server-side.
-// The token never reaches the browser.
+// The token never reaches the browser. Because every call carries that token, the proxy only serves devices that
+// unlocked the demo with DEMO_PASSCODE (/unlock), and refuses everyone while DEMO_PASSCODE is unset.
 import { execFile } from "node:child_process";
 import type { NextRequest } from "next/server";
 
+import {
+  PASSCODE_COOKIE,
+  PASSCODE_HEADER,
+  passcodeProblem,
+  recordFailure,
+  tooManyFailures,
+  unlocked,
+  visitorIp,
+} from "@/lib/demo-gate";
+
 const APP_URL = process.env.DATABRICKS_APP_URL?.replace(/\/+$/, "");
 const HOST = process.env.DATABRICKS_HOST;
-// Hop-by-hop and recomputed headers aren't forwarded; Authorization is ours to set.
-const DROP = new Set(["host", "connection", "content-length", "authorization", "cookie", "accept-encoding"]);
+// Hop-by-hop and recomputed headers aren't forwarded; Authorization is ours to set. Client-supplied forwarding
+// headers are dropped too and x-forwarded-for is rebuilt from the real visitor IP, or a caller could pick the
+// "IP" the API's per-IP upload limit counts against. The passcode header stays on this side.
+const DROP = new Set([
+  "host", "connection", "content-length", "authorization", "cookie", "accept-encoding",
+  "x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip", PASSCODE_HEADER,
+]);
 const REFRESH_EARLY_MS = 5 * 60_000;
 
 let cached: { token: string; expires: number } | null = null;
@@ -39,6 +55,18 @@ async function token(): Promise<string> {
 
 async function proxy(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   if (!APP_URL) return Response.json({ detail: "DATABRICKS_APP_URL is not set" }, { status: 500 });
+  const passcode = process.env.DEMO_PASSCODE;
+  const problem = passcodeProblem(passcode);
+  if (problem) return Response.json({ detail: problem }, { status: 503 });
+  const ip = visitorIp(req.headers);
+  if (!unlocked(req.headers, req.cookies.get(PASSCODE_COOKIE)?.value, passcode!)) {
+    if (req.headers.has(PASSCODE_HEADER)) {
+      if (tooManyFailures(ip)) return Response.json({ detail: "Too many wrong passcodes" }, { status: 429 });
+      recordFailure(ip);
+    }
+    return Response.json({ detail: "Locked: open /unlock on this device and enter the demo passcode" },
+                         { status: 401 });
+  }
   const { path } = await params;
   let auth: string;
   try {
@@ -51,6 +79,7 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
   req.headers.forEach((value, key) => {
     if (!DROP.has(key.toLowerCase())) headers.set(key, value);
   });
+  headers.set("x-forwarded-for", ip); // the API's per-IP limit counts the real visitor, not the laptop
   headers.set("authorization", `Bearer ${auth}`);
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const upstream = await fetch(`${APP_URL}/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`, {

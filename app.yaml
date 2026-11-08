@@ -1,6 +1,10 @@
 # Databricks App that hosts the FastAPI backend (plan WS2 step 9). Deploy steps: README.md, "Host the API on Databricks".
 # Databricks doesn't run this in a shell; it substitutes only $DATABRICKS_APP_PORT. Packages come from requirements.txt.
-command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "$DATABRICKS_APP_PORT"]
+# --forwarded-allow-ips "*": uvicorn then takes the client from the left-most X-Forwarded-For entry, which the
+# laptop's proxy sets to the real visitor IP, so the per-IP upload limit works. Trusting every hop is safe here
+# because only callers Databricks has already authenticated can reach the app.
+command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "$DATABRICKS_APP_PORT",
+          "--forwarded-allow-ips", "*"]
 
 env:
   # DATABRICKS_HOST and the app's service-principal credentials are set by the platform, so the API runs
@@ -14,7 +18,3 @@ env:
     valueFrom: anthropic-api-key
   - name: ELEVENLABS_API_KEY
     valueFrom: elevenlabs-api-key
-  # Every request reaches the app through the laptop's proxy and Databricks' proxy, so all callers share one
-  # client address. Make the per-client upload cap match the global one instead of throttling the whole team.
-  - name: INTAKE_LIMIT_PER_HOUR
-    value: "300"

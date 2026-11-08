@@ -72,6 +72,12 @@ phone). Databricks Apps only accept signed-in callers, so the laptop's Next.js s
 Databricks CLI to every `/api/*` request ([`route.ts`](apps/web/src/app/api/[...path]/route.ts)); the browser never
 sees it. Personal access tokens can't be exchanged for app tokens, which is why this uses the CLI login.
 
+Because every proxied call carries that token, **the proxy only serves devices that entered the demo passcode**
+(`DEMO_PASSCODE`, at `/unlock`), and refuses everyone while it's unset. Anyone with the tunnel URL can still load the
+PWA's pages, but its data calls fail until that device is unlocked. The proxy also replaces any client-sent
+`X-Forwarded-For`/`X-Real-IP`/`Forwarded`/`CF-Connecting-IP` with the real visitor IP (Cloudflare's
+`CF-Connecting-IP` through the tunnel), so the API's per-visitor upload limit can't be dodged.
+
 **1. Create the app (workspace admin, once).** Run these where the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html)
 is logged in to the team workspace.
 
@@ -116,13 +122,22 @@ Check it: open the app URL in a browser where you're signed in to Databricks and
    ```sh
    databricks auth login --host https://<workspace>.cloud.databricks.com
    ```
-2. Create `apps/web/.env.local`:
+2. Create `apps/web/.env.local` (git-ignored). Pick a passcode of at least 8 characters, e.g. four random words,
+   and share it only with whoever runs the demo:
    ```
    DATABRICKS_APP_URL=https://<app URL from the app page>
    DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
+   DEMO_PASSCODE=<at least 8 characters>
    ```
 3. Start the PWA as usual (`make dev` or `.\dev.cmd dev`; the local API it also starts is simply unused) and
    `make tunnel` for the phone. Delete `apps/web/.env.local` to go back to the local API.
+4. On each demo device (the phone, and the laptop browser if you use it), open `/unlock` once and enter the
+   passcode. It sets an HttpOnly cookie for 7 days; ten wrong guesses from one IP lock it out for 15 minutes.
+
+**Known limitations (accepted for the demo):** there's no login, so `X-User-Id` is a device-generated ID the API
+trusts as-is; anyone who has unlocked the demo and knows another device's ID could read that list. Without the
+tunnel, a client on the same network can still spoof its forwarded IP, because Next.js keeps a client-sent
+`X-Forwarded-For`; the passcode limits who can reach the proxy, and the API's global upload cap still applies.
 
 **Before judging:** Free Edition stops apps after 24 hours, so restart it Sunday morning
 (`databricks apps start realdeal-api`), then load the Deals tab once so the SQL warehouse is warm. If the PWA shows
