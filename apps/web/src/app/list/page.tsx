@@ -23,7 +23,11 @@ type Flow =
   | { step: "type" }
   | { step: "intake-error"; message: string };
 
-type PendingSave = { items: Schemas["ExtractedItem"][]; source: Schemas["SaveItems"]["source"] };
+type PendingSave = {
+  items: Schemas["ExtractedItem"][];
+  source: Schemas["SaveItems"]["source"];
+  boughtAt?: string | null;
+};
 
 export default function MyList() {
   const { items, loading, error, deleteError, addItems, deleteItem, refetch } = useItems();
@@ -120,12 +124,16 @@ export default function MyList() {
     }
   }
 
-  async function saveItems(extracted: Schemas["ExtractedItem"][], source: Schemas["SaveItems"]["source"]) {
-    pendingSaveRef.current = { items: extracted, source };
+  async function saveItems(
+    extracted: Schemas["ExtractedItem"][],
+    source: Schemas["SaveItems"]["source"],
+    boughtAt?: string | null,
+  ) {
+    pendingSaveRef.current = { items: extracted, source, boughtAt };
     setSaveError(undefined);
     setSaving(true);
     try {
-      await addItems({ items: extracted, source });
+      await addItems({ items: extracted, source, bought_at: boughtAt ?? undefined });
       pendingSaveRef.current = null;
       releasePreview();
       setFlow({ step: "closed" });
@@ -138,7 +146,7 @@ export default function MyList() {
 
   function retrySave() {
     const pending = pendingSaveRef.current;
-    if (pending) saveItems(pending.items, pending.source);
+    if (pending) saveItems(pending.items, pending.source, pending.boughtAt);
   }
 
   return (
@@ -224,7 +232,7 @@ export default function MyList() {
           saving={saving}
           saveError={saveError}
           onRetrySave={retrySave}
-          onSave={(chosen) => saveItems(chosen, "receipt")}
+          onSave={(chosen) => saveItems(chosen, "receipt", flow.extraction.bought_at)}
         />
       )}
 

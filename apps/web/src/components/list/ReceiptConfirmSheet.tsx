@@ -82,8 +82,10 @@ export function ReceiptConfirmSheet({
   const low = items.map((it, i) => ({ it, i })).filter(({ it }) => it.confidence < CONFIRM_BELOW);
   const ok = items.map((it, i) => ({ it, i })).filter(({ it }) => it.confidence >= CONFIRM_BELOW);
   const chosenItems = items.filter((it, i) => it.confidence < CONFIRM_BELOW || selected.has(i));
+  // Parsed with an explicit local time-of-day: a bare "2026-11-06" is parsed as UTC midnight, which
+  // renders as the previous day in any timezone west of UTC (Vancouver included).
   const date = extraction.bought_at
-    ? new Date(extraction.bought_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    ? new Date(`${extraction.bought_at}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
     : undefined;
   const headerLine = [extraction.store, date, `${items.length} items`].filter(Boolean).join(" · ");
 
