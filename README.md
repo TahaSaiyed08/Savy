@@ -420,4 +420,4 @@ the first time you open the repo; then ask it things like "how do I trigger a La
 
 ## Credits
 
-Built at HackCamp 2026 by a team of four. Every contributor's commits, with their own name and dates, are preserved in this repository's history. The project began in [krish-arora-88/SurRealDeal](https://github.com/krish-arora-88/SurRealDeal), where its pull requests and review discussion still live. Released under the MIT License (see [`LICENSE`](LICENSE)).
+Built at HackCamp 2026 by a team of four. Every contributor's commits, with their own name and dates, are preserved in this repository's history. The project began in [krish-arora-88/SurRealDeal](https://github.com/krish-arora-88/SurRealDeal), where its pull requests and review discussion still live; all 30 pull requests are also archived here, with their commits, reviews and comments, in [`docs/history`](docs/history/README.md). Released under the MIT License (see [`LICENSE`](LICENSE)).
