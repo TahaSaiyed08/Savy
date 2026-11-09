@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 # the limits below (timeout, one retry, a small worker pool) are kept modest.
 BASE = "https://backflipp.wishabi.com/flipp"
 TILES = "https://f.wishabi.net"  # flyer images: a zoom pyramid of 256 px tiles, <path><level>_<col>_<row>.jpg
-USER_AGENT = "Savy/1.0 (+https://github.com/krish-arora-88/SurRealDeal; hackathon project, polite use)"
+USER_AGENT = "Savy/1.0 (+https://github.com/TahaSaiyed08/Savy; hackathon project, polite use)"
 DEFAULT_POSTAL = "V6T1Z4"  # near UBC
 RETRY_SECONDS = 0.5
 TIMEOUT_SECONDS = 20.0

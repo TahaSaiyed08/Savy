@@ -201,7 +201,7 @@ Prereqs: [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you), Node 2
 WS1 and the demo laptop also need the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html).
 
 ```sh
-git clone https://github.com/krish-arora-88/SurRealDeal.git && cd SurRealDeal
+git clone https://github.com/TahaSaiyed08/Savy.git && cd Savy
 make setup   # uv sync + npm ci + copies .env.example to .env
 make dev     # API on :8000, PWA on :3000; Ctrl-C stops both
 ```
@@ -417,3 +417,7 @@ the first time you open the repo; then ask it things like "how do I trigger a La
 
 - Spec: [`docs/superpowers/specs/Savy — MVP Design.md`](docs/superpowers/specs/Savy%20—%20MVP%20Design.md)
 - Plan, workstreams, go/no-go, cut list: [`docs/plan.md`](docs/plan.md)
+
+## Credits
+
+Built at HackCamp 2026 by a team of four. Every contributor's commits, with their own name and dates, are preserved in this repository's history. The project began in [krish-arora-88/SurRealDeal](https://github.com/krish-arora-88/SurRealDeal), where its pull requests and review discussion still live. Released under the MIT License (see [`LICENSE`](LICENSE)).
